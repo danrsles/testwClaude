@@ -84,6 +84,17 @@ A checkout without `application-local.properties` fails at startup with `Failed 
 
 Note that the two files are read by different systems and neither sees the other: Spring does not understand the `.env` format, and Compose does not read `.properties`. A port or password changed in one must be changed in the other by hand.
 
+## Continuous integration
+
+`.github/workflows/docker-publish.yml` runs on every push to `master` and can be triggered manually from the Actions tab. It runs `mvn test` first, then builds the image and pushes it to Docker Hub as `danrsles/wants-api`, tagged `latest` and `sha-<commit>` so any published image traces back to its commit.
+
+It needs two repository secrets, set under Settings → Secrets and variables → Actions:
+
+- `DOCKERHUB_USERNAME` — the Docker Hub account name
+- `DOCKERHUB_TOKEN` — a Docker Hub **access token**, not the account password
+
+The test job needs no database, because the tests are `@WebMvcTest` slices. A future test that touches persistence would need a MySQL service container added to that job.
+
 ## Copilot app modernization hooks
 
 `.github/modernize/java-upgrade/` belongs to the GitHub Copilot app modernization (Java upgrade) extension, not to the application. Its scripts read a tool-call JSON payload on stdin and append `run_in_terminal` and `appmod-*` calls to a per-session JSONL file under that directory, for the extension to consume. The directory ignores its own contents via a nested `.gitignore` containing `**/*`, so those session logs are intentionally untracked. Leave this tree alone unless the task is explicitly about that extension.
