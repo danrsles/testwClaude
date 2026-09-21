@@ -17,6 +17,15 @@ java -jar target/demo-0.0.1-SNAPSHOT.jar       # run the packaged jar
 
 There is no linter or formatter configured.
 
+Container image:
+
+```bash
+docker build -t danrsles/wants-api:0.0.1 .
+docker run -p 8080:8080 --network tryclaude_default   -e MYSQL_HOST=mysql -e MYSQL_PORT=3306 -e MYSQL_DATABASE=demo   -e MYSQL_USER=... -e MYSQL_PASSWORD=... danrsles/wants-api:0.0.1
+```
+
+The image carries no configuration: `.dockerignore` keeps `.env` and `application-local.properties` out of the build context, so every credential must arrive as an environment variable. `MYSQL_PORT` is **3306** inside the Docker network — the 3307 mapping only exists on the host. The build skips tests (`-DskipTests`); run `mvn test` separately in CI.
+
 ## Architecture
 
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:

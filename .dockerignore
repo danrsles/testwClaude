@@ -1,0 +1,11 @@
+# Keep credentials and build output out of the build context entirely.
+.env
+application-local.properties
+target/
+.git/
+.github/
+.idea/
+.vscode/
+*.iml
+CLAUDE.md
+compose.yaml
