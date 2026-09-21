@@ -1,7 +1,10 @@
-# Copy to application-local.properties (git-ignored) and fill in real values.
-# Spring loads it automatically at startup; anything here overrides
-# src/main/resources/application.properties.
+# Copy to application-local.properties (git-ignored) and replace every CHANGEME.
+# Spring loads this file at startup via spring.config.import; values here
+# override src/main/resources/application.properties.
+#
+# These must match the credentials in .env, since that is what the MySQL
+# container is created with.
 
-spring.datasource.url=jdbc:mysql://localhost:3307/demo
-spring.datasource.username=demo
-spring.datasource.password=demo
+spring.datasource.url=jdbc:mysql://localhost:3307/CHANGEME
+spring.datasource.username=CHANGEME
+spring.datasource.password=CHANGEME

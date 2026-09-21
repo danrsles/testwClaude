@@ -19,13 +19,52 @@ There is no linter or formatter configured.
 
 ## Architecture
 
-A single-module Spring Boot 3.5.6 web application on Java 21, in package `com.example.demo`. It is a scaffold: `DemoApplication` is the stock `@SpringBootApplication` entry point and `HelloController` exposes one endpoint, `GET /hello`, returning a plain string. There is no service, persistence, or configuration layer, and `application.properties` sets only the application name — so the app relies entirely on Spring Boot defaults, including port 8080.
+A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
 
-Tests use `@WebMvcTest` with MockMvc, which loads only the web slice rather than the full context. New controller tests should follow that pattern and name the controller under test in the annotation.
+- `models` — JPA entities and enums (`Want`, `User`, `Category`)
+- `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`)
+- `services` — business logic, the only layer controllers talk to (`WantService`)
+- `controllers` — HTTP endpoints (`WantController`)
+
+Controllers depend on services, never on repositories directly, and all dependencies are injected through constructors rather than fields, which keeps them explicit and testable without a container.
+
+Endpoints:
+
+- `GET /wants` — every want as JSON, narrowed by an optional `?category=` parameter. Spring converts that parameter to the `Category` enum by exact name, so `FOOD` works while `food` or an unknown value yields 400 before the controller runs.
+- `POST /wants` — creates one, taking `{"message", "category", "userId"}` and returning 201 with the saved want. `CreateWantRequest` carries the Bean Validation constraints, so a blank message, missing field or unknown category is a 400 before the service is reached; an unknown `userId` is a 404 via `UserNotFoundException`, which carries `@ResponseStatus` rather than needing an exception handler.
+
+Each `Want` belongs to a `User` through a non-null `@ManyToOne` (`user_id`, a real foreign key). The association is deliberately unidirectional: a `User` has no `List<Want>`, which avoids the infinite recursion a bidirectional pair would cause during JSON serialization. Query wants by user through the repository rather than navigating from the user.
+
+`@ManyToOne` defaults to eager fetching, and that matters here because `spring.jpa.open-in-view=false` closes the persistence context before serialization — a lazy association would throw `LazyInitializationException` while Jackson writes the response. If this is ever made lazy for performance, the controller's query must fetch-join the user.
+
+Entities are serialized directly to JSON; there is no DTO layer, so `GET /wants` embeds the full user object in every want. If either entity gains a field that should not be exposed — a password hash on `User`, say — introduce a DTO rather than annotating around the problem.
+
+Tests use `@WebMvcTest` with MockMvc, which loads only the web slice — no datasource, so `mvn test` passes without MySQL running. Collaborators are replaced with `@MockitoBean` (Spring Boot 3.4+ replaced `@MockBean`). New controller tests should follow that pattern and name the controller under test in the annotation.
+
+## Schema migrations
+
+Flyway owns the schema. Migrations live in `src/main/resources/db/migration` as `V<n>__<description>.sql` and run automatically at startup, before Hibernate initializes.
+
+`spring.jpa.hibernate.ddl-auto=validate` — Hibernate never alters the database; it only checks that the tables match the entities and fails startup if they have drifted. **Adding a field to an entity therefore requires a new migration file**, not just the Java change. Never edit an applied migration: Flyway checksums each one and refuses to start if a checksum changes. Write `V3__...sql` instead.
+
+`V2__seed_sample_data.sql` inserts the user `dani` with two wants, so a fresh database is usable while there is no user API. It runs in every environment Flyway touches, so delete it before this schema is used for anything real.
+
+Resetting from scratch — the only safe way to replay migrations, and it destroys all data:
+
+```bash
+docker compose down -v && docker compose up -d
+```
 
 ## Database and configuration
 
 MySQL runs in Docker via `compose.yaml` (`docker compose up -d`), mapped to host port **3307** rather than the usual 3306 to avoid clashing with a locally installed MySQL. The app connects through `spring-boot-starter-data-jpa` and `mysql-connector-j`.
+
+Two git-ignored files must exist before anything runs, each copied from the committed `.example` template beside it and filled in (the templates contain only `CHANGEME`):
+
+- `.env` — read by Docker Compose only. Supplies the container's database name, user, password and host port. `compose.yaml` uses `${VAR:?message}` syntax, so `docker compose` fails with a named variable rather than starting a misconfigured container.
+- `application-local.properties` — read by Spring only. Its credentials must match `.env`, because those are what the container was created with.
+
+Changing `MYSQL_USER` or `MYSQL_PASSWORD` in `.env` does **not** re-credential an existing container: MySQL applies them only when initializing an empty data directory. Run `docker compose down -v` to discard the volume first, then `up -d`, and update `application-local.properties` to match.
 
 Configuration layers, in increasing precedence:
 
@@ -34,7 +73,7 @@ Configuration layers, in increasing precedence:
 
 A checkout without `application-local.properties` fails at startup with `Failed to parse the host:port pair 'localhost:${MYSQL_PORT}'` — that is the intended fail-fast, not a bug. Creating the local file from the example fixes it. `mvn test` is unaffected, because `@WebMvcTest` loads only the web slice and never opens a datasource.
 
-Note that `.env` is read by Docker Compose only — Spring does not understand that format, so a port or password changed there does not reach the application. Changing the container's port means updating `application-local.properties` to match.
+Note that the two files are read by different systems and neither sees the other: Spring does not understand the `.env` format, and Compose does not read `.properties`. A port or password changed in one must be changed in the other by hand.
 
 ## Copilot app modernization hooks
 

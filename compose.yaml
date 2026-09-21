@@ -4,10 +4,10 @@ services:
     container_name: demo-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-demo}
-      MYSQL_USER: ${MYSQL_USER:-demo}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-demo}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env (copy .env.example)}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?set MYSQL_DATABASE in .env (copy .env.example)}
+      MYSQL_USER: ${MYSQL_USER:?set MYSQL_USER in .env (copy .env.example)}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env (copy .env.example)}
     ports:
       - "${MYSQL_PORT:-3307}:3306"
     volumes:
