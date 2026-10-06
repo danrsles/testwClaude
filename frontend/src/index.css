@@ -1,0 +1,15 @@
+@import 'tailwindcss';
+
+/* Tailwind v4 needs no config file; theme values are declared in CSS. */
+@theme {
+  --color-food: oklch(0.63 0.14 48);
+  --color-movie: oklch(0.52 0.16 275);
+  --color-game: oklch(0.55 0.11 160);
+  --color-trip: oklch(0.55 0.17 315);
+}
+
+@layer base {
+  body {
+    @apply bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100;
+  }
+}

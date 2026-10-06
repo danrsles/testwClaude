@@ -26,6 +26,25 @@ docker run -p 8080:8080 --network tryclaude_default   -e MYSQL_HOST=mysql -e MYS
 
 The image carries no configuration: `.dockerignore` keeps `.env` and `application-local.properties` out of the build context, so every credential must arrive as an environment variable. `MYSQL_PORT` is **3306** inside the Docker network — the 3307 mapping only exists on the host. The build skips tests (`-DskipTests`); run `mvn test` separately in CI.
 
+## Frontend
+
+A React + TypeScript app built with Vite lives in `frontend/`, in the same repository as the backend so an API change and its UI change land in one commit.
+
+```bash
+cd frontend
+npm install
+npm run dev      # http://localhost:5173
+npm run build    # production bundle into frontend/dist
+```
+
+The dev server proxies `/api/*` to `http://localhost:8080`, stripping the prefix (see `vite.config.ts`). That keeps the browser on a single origin, so **the backend needs no CORS configuration**. Deploying the frontend on a different origin than the API would change that — then Spring would need CORS, or a reverse proxy would have to serve both under one hostname.
+
+`src/api.ts` holds every call to the backend; `src/types.ts` mirrors the API's shapes. Because there is no user API, `App.tsx` attributes new wants to `DEFAULT_USER_ID = 1`, the seeded `dani`.
+
+Styling is Tailwind CSS v4, wired through the `@tailwindcss/vite` plugin. v4 has **no `tailwind.config.js`** — theme values are declared in CSS, so the category colours live in the `@theme` block of `src/index.css` and are used as `bg-food`, `bg-movie` and so on. Dark mode uses the `dark:` variant, which follows `prefers-color-scheme` by default.
+
+State is local `useState`. All server data is refetched after each mutation, which is fine at this size; if the UI grows past one screen, reach for TanStack Query (server cache) before reaching for Redux (shared client state).
+
 ## Architecture
 
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
