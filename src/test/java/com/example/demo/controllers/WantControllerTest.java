@@ -10,6 +10,9 @@ import com.example.demo.services.WantService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import com.example.demo.services.WantNotFoundException;
+
+import org.mockito.BDDMockito;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -18,7 +21,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -78,5 +83,31 @@ class WantControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"message\":\"\",\"category\":\"GAME\",\"userId\":1}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updatesWant() throws Exception {
+        given(wantService.update(eq(1L), eq("Ramen somewhere else"), eq(Category.FOOD), eq(1L)))
+                .willReturn(new Want("Ramen somewhere else", Category.FOOD, dani));
+
+        mockMvc.perform(put("/wants/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Ramen somewhere else\",\"category\":\"FOOD\",\"userId\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Ramen somewhere else"));
+    }
+
+    @Test
+    void deletesWant() throws Exception {
+        mockMvc.perform(delete("/wants/1"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void deletingUnknownWantIsNotFound() throws Exception {
+        BDDMockito.willThrow(new WantNotFoundException(99L)).given(wantService).delete(99L);
+
+        mockMvc.perform(delete("/wants/99"))
+                .andExpect(status().isNotFound());
     }
 }
