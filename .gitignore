@@ -5,3 +5,16 @@ target/
 
 .env
 application-local.properties
+
+# Terraform: state contains credentials in plain text, tfvars holds them too
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/*.tfplan
+terraform/tfplan*
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
