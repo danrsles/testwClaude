@@ -1,11 +1,9 @@
 import { useState } from 'react'
 import type { SubmitEvent } from 'react'
+import { DEFAULT_USER_ID } from '../currentUser'
 import { useWants } from '../hooks/useWants'
 import { CATEGORIES } from '../types/wants'
 import type { Category, Want } from '../types/wants'
-
-// There is no user API yet, so every want is attributed to the seeded user.
-const DEFAULT_USER_ID = 1
 
 const TAG: Record<Category, string> = {
   FOOD: 'bg-food',

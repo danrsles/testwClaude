@@ -3,7 +3,7 @@
 A small full-stack app for tracking things you want to do, eat, play or visit. Each want has a message, one of four categories, and an owner.
 
 - **Backend** — Spring Boot 3.5.6 on Java 21, MySQL 8.4, Flyway migrations
-- **Frontend** — React + TypeScript, Vite, Tailwind CSS v4
+- **Frontend** — React + TypeScript, Vite, React Router, Tailwind CSS v4
 - **Infrastructure** — Docker image published to Docker Hub by GitHub Actions, Terraform for a single-instance AWS deployment
 
 ## Prerequisites
@@ -57,9 +57,15 @@ npm run dev             # http://localhost:5173
 
 The dev server proxies `/api/*` to port 8080, so the browser stays on one origin and the backend needs no CORS configuration.
 
+The app has three screens, linked from the nav at the top: the wants list at `/`, an about page at `/info`, and the user's profile at `/profile`. The header on every screen also shows the user's nickname and picture, linking to the profile. Until S3 uploads exist, a profile without an avatar URL shows a local placeholder picture.
+
 ## API
 
-Base path `/wants`. All bodies are JSON.
+All bodies are JSON.
+
+### Wants
+
+Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
@@ -79,21 +85,44 @@ curl -X POST -H 'Content-Type: application/json' \
   localhost:8080/wants
 ```
 
+### User profiles
+
+Base path `/user/profiles`. A profile holds a user's `email`, `nickname` and an optional `s3Url` for their avatar. Each user has at most one profile, and an email can belong to only one profile.
+
+| Method | Path | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `GET` | `/user/profiles` | — | `200` list of profiles | — |
+| `GET` | `/user/profiles?userId=1` | — | `200` list with that user's profile, or empty | — |
+| `GET` | `/user/profiles/{id}` | — | `200` profile | `404` unknown profile |
+| `POST` | `/user/profiles` | `{userId, email, nickname, s3Url?}` | `201` created profile | `400` invalid body, `404` unknown user, `409` user already has a profile or email taken |
+| `PUT` | `/user/profiles/{id}` | `{email, nickname, s3Url?}` | `200` updated profile | `400` invalid body, `404` unknown profile, `409` email taken |
+| `DELETE` | `/user/profiles/{id}` | — | `204` no content | `404` unknown profile |
+
+A blank or missing `s3Url` is stored as `null`. `PUT` takes no `userId`, because a profile cannot change owner. Profiles live in their own table rather than on `users`, so email does not appear inside the user object that every want embeds.
+
+```bash
+curl localhost:8080/user/profiles?userId=1
+
+curl -X PUT -H 'Content-Type: application/json'   -d '{"email":"dani@example.com","nickname":"Dani","s3Url":null}'   localhost:8080/user/profiles/1
+```
+
 ## Layout
 
 ```
 src/main/java/com/example/demo/
-  models/        JPA entities and enums (Want, User, Category)
+  models/        JPA entities and enums (Want, User, UserProfile, Category)
   repositories/  Spring Data interfaces
   services/      business logic and the exceptions that map to HTTP status
   controllers/   HTTP endpoints and request records
 src/main/resources/db/migration/   Flyway migrations
 frontend/src/
   api/           transport, one function per endpoint, no state
-  hooks/         server state (useWants owns the list and its mutations)
+  hooks/         server state (useWants, useUserProfile)
   types/         shapes mirroring the API
-  components/    the screens (Wants.tsx)
-  App.tsx        the shell, where a router will go
+  components/    the screens (Wants.tsx at /, Info.tsx at /info, UserProfile.tsx at /profile),
+                 plus ProfileBadge.tsx in the header and the shared Avatar.tsx
+  currentUser.ts DEFAULT_USER_ID, the user the app acts as until there is a login
+  App.tsx        the shell: nav and routes (BrowserRouter is in main.tsx)
 terraform/       single-instance AWS deployment
 ```
 
@@ -113,10 +142,15 @@ Frontend checks:
 
 ```bash
 cd frontend
+npm test            # Vitest + React Testing Library, in jsdom
 npx tsc --noEmit    # type check
 npm run lint        # oxlint
 npm run build       # production bundle into frontend/dist
 ```
+
+Component tests stub the `api/` module rather than `fetch`, so like the backend tests **they need no server and no database**. They live beside the component as `<Name>.test.tsx`.
+
+For a design review, ask Claude Code to use the **`ui-ux-reviewer`** agent (for example, "have the ui-ux-reviewer look at the Wants screen"). With the dev server running, it opens the page in Playwright, screenshots it at desktop and mobile widths in light and dark mode, tabs through it by keyboard, and reports visual design, UX and accessibility issues with suggested fixes. It does not change code or data.
 
 ## Database schema
 
@@ -132,7 +166,7 @@ To replay migrations from scratch, which destroys all data:
 docker compose down -v && docker compose up -d
 ```
 
-`V2__seed_sample_data.sql` inserts the sample user and wants. It runs in every environment Flyway touches, so delete it before using this schema for anything real.
+`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays.
 
 ## Container image
 
@@ -187,7 +221,9 @@ Then connect a client to `127.0.0.1:3308`.
 These are deliberate omissions, not oversights:
 
 - **No authentication.** Anyone who can reach the API can read and write every want. The Terraform defaults therefore restrict the API port by CIDR.
-- **No user API.** `dani` exists only because a migration seeds them, and the frontend attributes every new want to `userId: 1`.
+- **No user accounts.** Profiles can be managed through `/user/profiles`, but users themselves can't be created through the API. `dani` exists only because a migration seeds them, and the frontend acts as `userId: 1` (`DEFAULT_USER_ID` in `frontend/src/currentUser.ts`).
+- **No avatar uploads.** `s3Url` is a plain URL field until S3 is set up.
+- **The header badge does not refresh on edit.** The badge and the profile page each fetch the profile, so a nickname changed on `/profile` reaches the header on the next page load. A shared server cache such as TanStack Query would fix this.
 - **No DTO layer.** Entities serialize straight to JSON, so `GET /wants` embeds the full user object. A field that should not be exposed would need a DTO.
 - **State in Terraform is local.** `terraform.tfstate` holds credentials in cleartext and is git-ignored. A team would move it to an encrypted S3 backend with locking.
 
