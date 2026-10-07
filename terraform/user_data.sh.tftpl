@@ -1,0 +1,73 @@
+#!/bin/bash
+set -euxo pipefail
+
+# Docker Engine plus the compose plugin (compose is not in the AL2023 repos).
+dnf update -y
+dnf install -y docker
+systemctl enable --now docker
+usermod -aG docker ec2-user
+
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+mkdir -p /opt/wants
+cd /opt/wants
+
+# Credentials stay out of the compose file so they are not visible to
+# "docker compose config" output or anyone reading the stack definition.
+cat > .env <<'ENVEOF'
+MYSQL_ROOT_PASSWORD=${mysql_root_password}
+MYSQL_DATABASE=${mysql_database}
+MYSQL_USER=${mysql_user}
+MYSQL_PASSWORD=${mysql_password}
+ENVEOF
+chmod 600 .env
+
+cat > compose.yaml <<'COMPOSEEOF'
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: $${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: $${MYSQL_DATABASE}
+      MYSQL_USER: $${MYSQL_USER}
+      MYSQL_PASSWORD: $${MYSQL_PASSWORD}
+    # Bound to the instance's loopback only: unreachable from the internet
+    # regardless of security groups, but available to an SSH tunnel.
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  app:
+    image: ${image}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # This is the answer to "how does the app find the database":
+      # inside the compose network, the hostname is the service name and
+      # the port is MySQL's real 3306, not any host-side mapping.
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: $${MYSQL_DATABASE}
+      MYSQL_USER: $${MYSQL_USER}
+      MYSQL_PASSWORD: $${MYSQL_PASSWORD}
+    ports:
+      - "${app_port}:8080"
+
+volumes:
+  mysql-data:
+COMPOSEEOF
+
+docker compose up -d

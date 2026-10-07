@@ -26,6 +26,37 @@ docker run -p 8080:8080 --network tryclaude_default   -e MYSQL_HOST=mysql -e MYS
 
 The image carries no configuration: `.dockerignore` keeps `.env` and `application-local.properties` out of the build context, so every credential must arrive as an environment variable. `MYSQL_PORT` is **3306** inside the Docker network — the 3307 mapping only exists on the host. The build skips tests (`-DskipTests`); run `mvn test` separately in CI.
 
+## Frontend
+
+A React + TypeScript app built with Vite lives in `frontend/`, in the same repository as the backend so an API change and its UI change land in one commit.
+
+```bash
+cd frontend
+npm install
+npm run dev      # http://localhost:5173
+npm run build    # production bundle into frontend/dist
+```
+
+The dev server proxies `/api/*` to `http://localhost:8080`, stripping the prefix (see `vite.config.ts`). That keeps the browser on a single origin, so **the backend needs no CORS configuration**. Deploying the frontend on a different origin than the API would change that — then Spring would need CORS, or a reverse proxy would have to serve both under one hostname.
+
+`src/` is organised by role:
+
+```
+src/api/wants.ts          transport: one function per endpoint, no state
+src/hooks/useWants.ts     server state: the cached list and its mutations
+src/types/wants.ts        the shapes the API returns and accepts
+src/components/Wants.tsx  the whole wants screen, including its own UI state
+src/App.tsx               the shell: the page frame, and where a router will go
+```
+
+Imports only ever point down that list: a component calls a hook, a hook calls `api/`, and **nothing but a hook calls `api/` directly**. `App.tsx` holds no state at all, so a second screen means a new component and a route rather than changes to the first one.
+
+Because there is no user API, `Wants.tsx` attributes new wants to `DEFAULT_USER_ID = 1`, the seeded `dani`.
+
+Styling is Tailwind CSS v4, wired through the `@tailwindcss/vite` plugin. v4 has **no `tailwind.config.js`** — everything is declared in CSS. `src/index.css` holds the category colours (an `@theme` block, used as `bg-food`, `bg-movie` and so on) and the shared `field` and `btn` classes (`@utility` blocks, which is why there is no styles constants module). Neither utility sets padding — callers size themselves, so two utilities never fight over the same property. Dark mode uses the `dark:` variant, which follows `prefers-color-scheme` by default.
+
+State is local `useState`. All server data is refetched after each mutation, which is fine at this size; if the UI grows past one screen, reach for TanStack Query (server cache) before reaching for Redux (shared client state).
+
 ## Architecture
 
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
@@ -98,3 +129,7 @@ The test job needs no database, because the tests are `@WebMvcTest` slices. A fu
 ## Copilot app modernization hooks
 
 `.github/modernize/java-upgrade/` belongs to the GitHub Copilot app modernization (Java upgrade) extension, not to the application. Its scripts read a tool-call JSON payload on stdin and append `run_in_terminal` and `appmod-*` calls to a per-session JSONL file under that directory, for the extension to consume. The directory ignores its own contents via a nested `.gitignore` containing `**/*`, so those session logs are intentionally untracked. Leave this tree alone unless the task is explicitly about that extension.
+
+
+## Further instructions
+Update the README.md as we make more features and commits
