@@ -1,15 +1,19 @@
-import type { Category, Want, WantRequest } from '../types/wants'
+import type {
+  CreateUserProfileRequest,
+  UpdateUserProfileRequest,
+  UserProfile,
+} from '../types/userProfiles'
 import { fail } from './http'
 
-const BASE = '/api/wants'
+const BASE = '/api/user/profiles'
 
-export async function listWants(category?: Category | ''): Promise<Want[]> {
-  const url = category ? `${BASE}?category=${category}` : BASE
+export async function listUserProfiles(userId?: number): Promise<UserProfile[]> {
+  const url = userId === undefined ? BASE : `${BASE}?userId=${userId}`
   const response = await fetch(url)
   return response.ok ? response.json() : fail(response)
 }
 
-export async function createWant(body: WantRequest): Promise<Want> {
+export async function createUserProfile(body: CreateUserProfileRequest): Promise<UserProfile> {
   const response = await fetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -18,7 +22,10 @@ export async function createWant(body: WantRequest): Promise<Want> {
   return response.ok ? response.json() : fail(response)
 }
 
-export async function updateWant(id: number, body: WantRequest): Promise<Want> {
+export async function updateUserProfile(
+  id: number,
+  body: UpdateUserProfileRequest,
+): Promise<UserProfile> {
   const response = await fetch(`${BASE}/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -27,7 +34,7 @@ export async function updateWant(id: number, body: WantRequest): Promise<Want> {
   return response.ok ? response.json() : fail(response)
 }
 
-export async function deleteWant(id: number): Promise<void> {
+export async function deleteUserProfile(id: number): Promise<void> {
   const response = await fetch(`${BASE}/${id}`, { method: 'DELETE' })
   if (!response.ok) await fail(response)
 }

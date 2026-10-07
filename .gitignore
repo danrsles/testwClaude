@@ -18,3 +18,6 @@ terraform/tfplan*
 # Frontend
 frontend/node_modules/
 frontend/dist/
+
+# Playwright MCP snapshots, logs and UI review screenshots
+.playwright-mcp/
