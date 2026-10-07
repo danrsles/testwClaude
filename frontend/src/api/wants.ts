@@ -1,4 +1,4 @@
-import type { Category, Want, WantRequest } from './types'
+import type { Category, Want, WantRequest } from '../types/wants'
 
 const BASE = '/api/wants'
 

@@ -88,11 +88,16 @@ src/main/java/com/example/demo/
   services/      business logic and the exceptions that map to HTTP status
   controllers/   HTTP endpoints and request records
 src/main/resources/db/migration/   Flyway migrations
-frontend/src/    React app (api.ts holds every backend call)
+frontend/src/
+  api/           transport, one function per endpoint, no state
+  hooks/         server state (useWants owns the list and its mutations)
+  types/         shapes mirroring the API
+  components/    the screens (Wants.tsx)
+  App.tsx        the shell, where a router will go
 terraform/       single-instance AWS deployment
 ```
 
-Controllers depend on services, never on repositories directly, and dependencies are injected through constructors.
+Controllers depend on services, never on repositories directly, and dependencies are injected through constructors. The frontend layers the same way: components call hooks, hooks call `api/`, and nothing else does.
 
 ## Tests
 
