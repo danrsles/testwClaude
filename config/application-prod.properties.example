@@ -1,0 +1,13 @@
+# Copy to config/application-prod.properties (git-ignored) to run the prod
+# profile from your machine against the hosted database:
+#
+#   mvn spring-boot:run -Dspring-boot.run.profiles=prod
+#
+# Everything you do then happens in the real database.
+#
+# verify-full checks the server's certificate against the provider's CA and its
+# host name. Keep ca.pem outside the repository, and use forward slashes in the
+# path even on Windows: backslashes are escapes in a .properties file.
+spring.datasource.url=jdbc:postgresql://CHANGEME.aivencloud.com:CHANGEME/defaultdb?sslmode=verify-full&sslrootcert=C:/Users/CHANGEME/.aiven/ca.pem
+spring.datasource.username=avnadmin
+spring.datasource.password=CHANGEME

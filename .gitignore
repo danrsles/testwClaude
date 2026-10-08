@@ -4,7 +4,9 @@ target/
 .vscode/
 
 .env
-application-local.properties
+# Credentials for running the prod profile from a laptop; templates stay tracked
+/config/*
+!/config/*.example
 
 # Terraform: state contains credentials in plain text, tfvars holds them too
 terraform/.terraform/
