@@ -1,0 +1,6 @@
+# Files that run on Linux must keep LF line endings even when checked out on
+# Windows with core.autocrlf=true. A CRLF in the EC2 bootstrap script makes bash
+# fail on the server with "$'\r': command not found".
+*.sh      text eol=lf
+*.tftpl   text eol=lf
+Dockerfile text eol=lf

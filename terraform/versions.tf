@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.11" # write-only arguments and ephemeral variables
 
   required_providers {
     aws = {

@@ -201,9 +201,27 @@ It requires two repository secrets: `DOCKERHUB_USERNAME`, and `DOCKERHUB_TOKEN` 
 
 ## Deploying to AWS
 
-> **Out of date:** the Terraform still runs a MySQL container and passes `MYSQL_*` settings, which the current image no longer reads. A fresh `apply` would start an API that cannot reach a database. It is being replaced with a two-server layout using the Aiven database.
+`terraform/` provisions one EC2 instance for the API. It installs Docker on boot and runs the published image, which connects to the hosted Aiven PostgreSQL database. There is no database on the instance.
 
-`terraform/` provisions one EC2 instance that installs Docker on boot and runs the published image alongside a MySQL container.
+```
+Browser / curl ──► EC2 (Elastic IP, :8080)  wants-api container, prod profile
+                     │  at boot: reads the DB password from SSM Parameter Store
+                     └──TLS (verify-full)──► Aiven PostgreSQL
+```
+
+**Before the first apply**
+
+1. Download Aiven's CA certificate into `terraform/ca.pem`. It is git-ignored, and `db_ca_cert_path` can point elsewhere.
+2. Fill in `terraform.tfvars` from the template. `db_url` must end in `sslrootcert=/certs/ca.pem`, which is the path *inside the container*, not on your machine. Every value needs double quotes.
+3. Put the database password in your shell, **not** in `terraform.tfvars`. Each `plan` and `apply` needs it:
+
+   ```bash
+   read -s -p "DB password: " TF_VAR_db_password && echo && export TF_VAR_db_password   # Git Bash
+   ```
+
+   ```powershell
+   $env:TF_VAR_db_password = '...'                                                     # PowerShell
+   ```
 
 ```bash
 cd terraform
@@ -211,20 +229,30 @@ cp terraform.tfvars.example terraform.tfvars   # then fill it in
 terraform init
 terraform plan
 terraform apply
+terraform output public_ip
 terraform output api_url
 ```
 
-Allow two to three minutes after `apply` before the API answers — `terraform apply` returns as soon as the instance launches, while cloud-init is still installing Docker and pulling images.
+**After the first apply,** add the `public_ip` output to the Aiven service's **Allowed IP addresses**, if you restrict them. It's an Elastic IP, so it stays the same when the instance is replaced. Until it's allowed, the app can't reach the database: the container restarts on its own and connects once the address is added.
 
-MySQL binds to the instance's loopback and has no security group rule, so reaching it from a GUI client means tunnelling over SSH:
+Allow two to three minutes after `apply` before the API answers. `terraform apply` returns as soon as the instance launches, while cloud-init is still installing Docker and pulling the image.
+
+What the instance gets at boot (`user_data.sh.tftpl`):
+- `/opt/wants/ca.pem`, the certificate, sent in the user data. It isn't secret.
+- `/opt/wants/.env`, holding `DB_URL` and `DB_USER`, plus `DB_PASSWORD` fetched from SSM.
+- `/opt/wants/compose.yaml`, which runs the image with `ca.pem` mounted read-only at `/certs/ca.pem`.
+
+**The password** goes to SSM Parameter Store as a `SecureString` (`/wants/db-password`), encrypted with the free AWS-managed key. It is a *write-only* value (`value_wo`) from an *ephemeral* variable, so Terraform sends it to AWS but keeps no copy: it is in neither the plan nor `terraform.tfstate`. The instance's IAM role may read that one parameter and nothing else, so the password never appears in the instance's user data either. Because Terraform stores nothing to compare against, it can't detect a password change on its own. After changing the password, set the new one in `TF_VAR_db_password`, raise `db_password_version` in `terraform.tfvars`, apply, and restart the app.
+
+Debugging on the instance:
 
 ```bash
-ssh -i <key>.pem -L 3308:127.0.0.1:3306 ec2-user@<public-ip>
+ssh -i <key>.pem ec2-user@<public-ip>
+sudo cat /var/log/cloud-init-output.log            # the boot script's output
+cd /opt/wants && sudo docker compose logs -f app   # the app's logs
 ```
 
-Then connect a client to `127.0.0.1:3308`.
-
-`terraform destroy` removes everything it created. The database lives on the instance's disk, so **destroying the instance destroys the data** — and because `user_data_replace_on_change` is set, editing the bootstrap script also replaces the instance.
+`terraform destroy` removes the instance, Elastic IP, IAM role and SSM parameter. The data lives in Aiven, so destroying or replacing the instance loses nothing. Because `user_data_replace_on_change` is set, changing the image, the certificate or any database setting replaces the instance. Changing only the password updates SSM; restart the app for it to take effect.
 
 ## Known gaps
 
@@ -235,15 +263,15 @@ These are deliberate omissions, not oversights:
 - **No avatar uploads.** `s3Url` is a plain URL field until S3 is set up.
 - **The header badge does not refresh on edit.** The badge and the profile page each fetch the profile, so a nickname changed on `/profile` reaches the header on the next page load. A shared server cache such as TanStack Query would fix this.
 - **No DTO layer.** Entities serialize straight to JSON, so `GET /wants` embeds the full user object. A field that should not be exposed would need a DTO.
-- **State in Terraform is local.** `terraform.tfstate` holds credentials in cleartext and is git-ignored. A team would move it to an encrypted S3 backend with locking.
+- **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed
 
-Each is git-ignored; the first two contain live credentials.
+Each is git-ignored. `config/application-prod.properties` contains the live database password.
 
 | File | Contains |
 | --- | --- |
 | `config/application-prod.properties` | hosted database credentials, for running the `prod` profile locally |
-| `terraform/terraform.tfvars` | database passwords, your IP |
-| `terraform/terraform.tfstate` | everything above, in cleartext |
+| `terraform/terraform.tfvars` | the database URL and user, your IP |
+| `terraform/terraform.tfstate` | the deployed infrastructure's details, in cleartext |
 | `terraform/tfplan` | a zip archive embedding every variable value |

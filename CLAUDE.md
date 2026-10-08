@@ -170,7 +170,22 @@ It needs two repository secrets, set under Settings â†’ Secrets and variables â†
 
 The test job needs no database, because the tests are `@WebMvcTest` slices. A future test that touches persistence would need a PostgreSQL service container added to that job.
 
-**Terraform is not yet updated for PostgreSQL.** `terraform/user_data.sh.tftpl` still runs a MySQL container and passes `MYSQL_*` variables, which the current image no longer reads, so a fresh `terraform apply` would start an app that cannot connect. The `deployPathCICD` work replaces it with the two-instance layout pointed at Aiven.
+## Deployment (Terraform)
+
+`terraform/` runs **one API instance** against the hosted Aiven database; there is no database on AWS. The two-instance layout (a public nginx UI server in front of a private API) is planned but not built.
+
+- **Password:** the database password is an SSM `SecureString` (`aws_ssm_parameter.db_password`, default name `/wants/db-password`) using the AWS-managed `aws/ssm` key.
+  - It is set through **`value_wo`, a write-only argument, fed from an `ephemeral = true` variable**, so it never enters the plan or `terraform.tfstate`. Both need Terraform 1.11 or later, hence `required_version = ">= 1.11"`.
+  - Supply it as `TF_VAR_db_password` in the shell, never in `terraform.tfvars`. `terraform.tfvars` outranks the environment variable, so a leftover line there would silently override it.
+  - Write-only values can't be diffed, so Terraform only re-sends the password when `db_password_version` changes. Raise it whenever the password changes.
+  - The instance profile's only permission is `ssm:GetParameter` on that one ARN. No `kms:Decrypt` is needed, because the managed key's policy allows decryption through SSM for principals in the account.
+  - The boot script fetches the password with the preinstalled AWS CLI, under IMDSv2 (`http_tokens = "required"`).
+- **The boot script must never `set -x`:** it would print the password into `/var/log/cloud-init-output.log`.
+- **Certificate:** `ca.pem` is read from `terraform/` (git-ignored, `terraform/*.pem`), passed through `trimspace(file(...))` in the user data, written to `/opt/wants/ca.pem`, and mounted at `/certs/ca.pem`. A validation on `db_url` requires `sslrootcert=/certs/ca.pem` and rejects a laptop path by mistake.
+- **`.env` on the instance** quotes every value in single quotes, so Compose doesn't interpret the `&` in the JDBC URL.
+- **Fixed address:** an Elastic IP is associated separately (`aws_eip_association`), so it survives instance replacement and can be added to Aiven's IP allowlist. `associate_public_ip_address` stays true, so the instance has outbound access before the association happens.
+- **What replaces the instance:** any change to the user data (image tag, certificate, URL, user), because `user_data_replace_on_change` is set. A password change only updates SSM, so the app needs a restart to pick it up. The container keeps the password it got at first boot in `/opt/wants/.env`, so restarting means rerunning the fetch-and-write steps, or replacing the instance.
+- **AWS account guardrail:** the account has a budget action (`Monthly-50-Max-Budget`) that attaches the deny policy `MyActualBudgetKillSwitchPayload` (`ec2:RunInstances`, `ec2:StartInstances`, `ecs:*`) to the `admin-worker` user at 100% of $50. If `apply` fails with `UnauthorizedOperation ... explicit deny ... MyActualBudgetKillSwitchPayload`, check the budget action's status before anything else. Its automatic reset has failed before (`RESET_FAILURE`), leaving the block on with no spend.
 
 ## Copilot app modernization hooks
 

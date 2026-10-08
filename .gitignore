@@ -16,6 +16,8 @@ terraform/.terraform.lock.hcl
 terraform/terraform.tfvars
 terraform/*.tfplan
 terraform/tfplan*
+# The database CA certificate; not secret, but downloaded per environment
+terraform/*.pem
 
 # Frontend
 frontend/node_modules/
