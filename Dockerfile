@@ -27,4 +27,10 @@ COPY --from=extract /extracted/app.jar ./app.jar
 
 USER spring
 EXPOSE 8080
+
+# A container is always a deployed environment, so it runs the prod profile:
+# the database comes from the DB_* variables, and startup fails if any is
+# missing. Running from source (mvn spring-boot:run) is unaffected and stays
+# on the local profile. Override with -e SPRING_PROFILES_ACTIVE=... if ever needed.
+ENV SPRING_PROFILES_ACTIVE=prod
 ENTRYPOINT ["java", "-jar", "app.jar"]

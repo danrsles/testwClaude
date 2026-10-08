@@ -2,7 +2,7 @@
 
 A small full-stack app for tracking things you want to do, eat, play or visit. Each want has a message, one of four categories, and an owner.
 
-- **Backend** — Spring Boot 3.5.6 on Java 21, MySQL 8.4, Flyway migrations
+- **Backend** — Spring Boot 3.5.6 on Java 21, PostgreSQL 18 (hosted on Aiven, or PostGIS in Docker locally), Flyway migrations
 - **Frontend** — React + TypeScript, Vite, React Router, Tailwind CSS v4
 - **Infrastructure** — Docker image published to Docker Hub by GitHub Actions, Terraform for a single-instance AWS deployment
 
@@ -12,40 +12,45 @@ A small full-stack app for tracking things you want to do, eat, play or visit. E
 | --- | --- | --- |
 | JDK | 21 | No Maven wrapper is checked in |
 | Maven | 3.9.x | Must be on `PATH` |
-| Docker | with Compose v2 | Runs MySQL locally |
+| Docker | with Compose v2 | Must be running; the backend starts its local PostgreSQL itself |
 | Node | 20+ | For the frontend only |
 
 ## Getting started
 
-### 1. Create the two config files
+### 1. Start Docker
 
-Neither is in git, and both are required. Copy the templates beside them and replace every `CHANGEME`:
+The backend starts its own local database, so Docker must be running. There are no config files to create for local development.
 
-```bash
-cp .env.example .env
-cp application-local.properties.example application-local.properties
-```
-
-- **`.env`** is read by Docker Compose only. It defines the database name, user and passwords the MySQL container is created with.
-- **`application-local.properties`** is read by Spring only. Its credentials must match `.env`, because those are what the container was built with.
-
-The two files are read by different tools and neither sees the other — Spring does not understand the `.env` format, and Compose does not read `.properties`. A value changed in one must be changed in the other by hand.
-
-### 2. Start MySQL
-
-```bash
-docker compose up -d
-```
-
-The container is published on host port **3307**, not 3306, to avoid colliding with a locally installed MySQL. Inside Docker networks it is still 3306.
-
-### 3. Run the backend
+### 2. Run the backend
 
 ```bash
 mvn spring-boot:run     # http://localhost:8080
 ```
 
-Flyway creates the schema on first start and seeds a user, `dani`, with two wants.
+This uses the default `local` profile. Spring Boot runs `docker compose up` on `compose.yaml`, which starts PostGIS on PostgreSQL 18 (host port **5433**), and connects to it. Flyway creates the schema on first start and seeds a user, `dani`, with two wants. The container keeps running after the app stops. Stop it with `docker compose stop`, or wipe it with `docker compose down -v`.
+
+### 3. Optional: run against the hosted database
+
+The deployed backend uses an Aiven PostgreSQL database. To run your local backend against it instead:
+
+1. Download the project's CA certificate (`ca.pem`) from the Aiven console and save it outside the repository.
+2. Copy the template and fill in the connection details:
+
+   ```bash
+   cp config/application-prod.properties.example config/application-prod.properties
+   ```
+
+   ```properties
+   spring.datasource.url=jdbc:postgresql://<host>:<port>/defaultdb?sslmode=verify-full&sslrootcert=C:/Users/<you>/.aiven/ca.pem
+   ```
+
+3. Run with the `prod` profile:
+
+   ```bash
+   mvn spring-boot:run -Dspring-boot.run.profiles=prod
+   ```
+
+`config/application-prod.properties` is git-ignored. `verify-full` encrypts the connection and checks the server's certificate and host name. Use forward slashes in the path, even on Windows. **This is the real database**, so anything you do appears there too.
 
 ### 4. Run the frontend
 
@@ -174,16 +179,19 @@ docker compose down -v && docker compose up -d
 docker build -t danrsles/wants-api:dev .
 ```
 
-The image contains no configuration. `.dockerignore` keeps `.env` and `application-local.properties` out of the build context, so credentials must arrive as environment variables:
+The image contains no credentials. `.dockerignore` keeps `config/` and `.env` out of the build context. The image sets `SPRING_PROFILES_ACTIVE=prod`, so a container always uses the hosted-database settings, which arrive as environment variables:
 
 ```bash
 docker run -p 8080:8080 \
-  -e MYSQL_HOST=<host> -e MYSQL_PORT=3306 -e MYSQL_DATABASE=demo \
-  -e MYSQL_USER=<user> -e MYSQL_PASSWORD=<password> \
+  -e DB_URL='jdbc:postgresql://<host>:<port>/defaultdb?sslmode=verify-full&sslrootcert=/certs/ca.pem' \
+  -e DB_USER=<user> -e DB_PASSWORD=<password> \
+  -v /path/to/ca.pem:/certs/ca.pem:ro \
   danrsles/wants-api:dev
 ```
 
-`MYSQL_PORT` is **3306** inside a Docker network; the 3307 mapping exists only on a developer's host.
+The CA certificate is mounted at runtime rather than built into the image, so the same image works against any PostgreSQL database.
+
+If `DB_URL` is missing, startup fails with `'url' must start with "jdbc"`. That means the variable isn't set, not that the URL is malformed.
 
 ## Continuous integration
 
@@ -192,6 +200,8 @@ docker run -p 8080:8080 \
 It requires two repository secrets: `DOCKERHUB_USERNAME`, and `DOCKERHUB_TOKEN` — a Docker Hub access token, not an account password.
 
 ## Deploying to AWS
+
+> **Out of date:** the Terraform still runs a MySQL container and passes `MYSQL_*` settings, which the current image no longer reads. A fresh `apply` would start an API that cannot reach a database. It is being replaced with a two-server layout using the Aiven database.
 
 `terraform/` provisions one EC2 instance that installs Docker on boot and runs the published image alongside a MySQL container.
 
@@ -229,12 +239,11 @@ These are deliberate omissions, not oversights:
 
 ## Files that must never be committed
 
-Each is git-ignored; the first three contain live credentials.
+Each is git-ignored; the first two contain live credentials.
 
 | File | Contains |
 | --- | --- |
-| `.env` | MySQL container credentials |
-| `application-local.properties` | datasource credentials |
+| `config/application-prod.properties` | hosted database credentials, for running the `prod` profile locally |
 | `terraform/terraform.tfvars` | database passwords, your IP |
 | `terraform/terraform.tfstate` | everything above, in cleartext |
 | `terraform/tfplan` | a zip archive embedding every variable value |

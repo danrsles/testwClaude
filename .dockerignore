@@ -1,6 +1,6 @@
 # Keep credentials and build output out of the build context entirely.
 .env
-application-local.properties
+config/
 target/
 .git/
 .github/
