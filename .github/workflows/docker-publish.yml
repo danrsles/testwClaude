@@ -99,6 +99,79 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Tells the API instance to pull the image just published and restart on it,
+  # through SSM Run Command: no SSH, no open port, no keys in GitHub. Runs only
+  # on master and once AWS_DEPLOY_API_ROLE_ARN exists; fails if the API is not
+  # healthy afterwards.
+  deploy-api:
+    name: Deploy API
+    needs: publish-api
+    if: github.ref == 'refs/heads/master' && vars.AWS_DEPLOY_API_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    # One deploy at a time; a newer merge waits rather than racing this one.
+    concurrency:
+      group: deploy-api
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the API deploy role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_API_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Find the API instance
+        id: instance
+        run: |
+          ids=$(aws ec2 describe-instances \
+            --filters Name=tag:Name,Values=wants-api Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          count=$(wc -w <<< "$ids")
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected exactly one running wants-api instance, found $count: $ids"
+            exit 1
+          fi
+          echo "id=$ids" >> "$GITHUB_OUTPUT"
+
+      # The script travels base64-encoded so no quoting survives the trip
+      # through the CLI, JSON and the instance's shell to be misread.
+      - name: Run deploy/redeploy-api.sh on the instance
+        id: send
+        run: |
+          script=$(base64 -w0 deploy/redeploy-api.sh)
+          params=$(jq -n --arg c "echo $script | base64 -d | bash" \
+            '{commands: [$c], executionTimeout: ["600"]}')
+          command_id=$(aws ssm send-command \
+            --instance-ids "${{ steps.instance.outputs.id }}" \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy wants-api ${GITHUB_SHA::7}" \
+            --parameters "$params" \
+            --query Command.CommandId --output text)
+          echo "command_id=$command_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the result
+        run: |
+          for _ in $(seq 1 120); do
+            status=$(aws ssm get-command-invocation \
+              --command-id "${{ steps.send.outputs.command_id }}" \
+              --instance-id "${{ steps.instance.outputs.id }}" \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in
+              Success|Failed|Cancelled|TimedOut|Undeliverable|Terminated) break ;;
+            esac
+            sleep 5
+          done
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.send.outputs.command_id }}" \
+            --instance-id "${{ steps.instance.outputs.id }}" \
+            --query '[StandardOutputContent, StandardErrorContent]' --output text
+          echo "Status: $status"
+          [ "$status" = "Success" ]
+
   # Uploads the React build to S3 and refreshes CloudFront. Runs only on master
   # (the AWS role trusts nothing else) and only once the repository variables
   # from `terraform output` exist; until then it shows as skipped.
