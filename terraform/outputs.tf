@@ -34,3 +34,8 @@ output "github_deploy_role_arn" {
   description = "Set as the AWS_DEPLOY_ROLE_ARN repository variable in GitHub."
   value       = aws_iam_role.github_deploy_site.arn
 }
+
+output "github_deploy_api_role_arn" {
+  description = "Set as the AWS_DEPLOY_API_ROLE_ARN repository variable in GitHub."
+  value       = aws_iam_role.github_deploy_api.arn
+}

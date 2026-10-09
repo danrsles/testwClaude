@@ -102,6 +102,15 @@ resource "aws_iam_role_policy" "read_db_password" {
   policy = data.aws_iam_policy_document.read_db_password.json
 }
 
+# Lets the SSM agent (preinstalled on Amazon Linux 2023) register the instance
+# and receive Run Command requests, which is how CI redeploys the API without
+# SSH. It also enables Session Manager shells. The agent reaches SSM over the
+# instance's outbound access; no inbound port is opened.
+resource "aws_iam_role_policy_attachment" "api_ssm_core" {
+  role       = aws_iam_role.api.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_instance_profile" "api" {
   name = "wants-api"
   role = aws_iam_role.api.name

@@ -176,7 +176,17 @@ Configuration files:
 - **It authenticates with GitHub OIDC**, not stored keys: `aws-actions/configure-aws-credentials` assumes `vars.AWS_DEPLOY_ROLE_ARN`, and the job needs `permissions: id-token: write`. The role (`terraform/github.tf`) trusts only `<github_oidc_subject_prefix>:ref:refs/heads/master`, so `workflow_dispatch` from any other branch fails to assume it. **This repository uses GitHub's immutable OIDC subject format**, `repo:danrsles@13107885/testwClaude@1380283664:...`, which embeds the owner and repository IDs, not the classic `repo:danrsles/testwClaude:...`. A trust policy written in the classic form fails with "Not authorized to perform sts:AssumeRoleWithWebIdentity". Read the real prefix with `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`.
 - **It reads three repository *variables*** (not secrets): `AWS_DEPLOY_ROLE_ARN`, `SITE_BUCKET` and `CLOUDFRONT_DISTRIBUTION_ID`, from `terraform output`. It is skipped (`if: vars.SITE_BUCKET != ''`) until they exist.
 
-Publishing the API image does not redeploy the API instance.
+**`deploy-api`** (needs `publish-api`) redeploys the instance through **SSM Run Command**:
+- It assumes `vars.AWS_DEPLOY_API_ROLE_ARN`, finds exactly one running instance tagged `Name=wants-api`, and sends `deploy/redeploy-api.sh` with the `AWS-RunShellScript` document.
+- The script travels **base64-encoded** (`echo <b64> | base64 -d | bash`), because SSM wraps commands in its own shell script and quoting would not survive the CLI, JSON and that shell.
+- The script, run as root:
+  - runs `docker compose pull app && up -d app`
+  - sources `/opt/wants/.env`, so the health check can send `X-Origin-Secret` (the API rejects requests without it)
+  - polls `localhost:8080/wants` for up to 2 minutes, prunes old images on success, and on failure prints the last 60 log lines and exits 1, which fails the job
+  - must never use `set -x`, because of the secrets in `.env`
+- The job polls `ssm get-command-invocation` and prints the script's output.
+- `concurrency: deploy-api` serializes deploys.
+- There is no rollback; re-running an older commit's workflow republishes its image as `latest`.
 
 It needs two repository secrets, set under Settings → Secrets and variables → Actions:
 
@@ -210,7 +220,14 @@ The test job needs no database, because the tests are `@WebMvcTest` slices. A fu
   - Running the prod profile from a laptop needs `app.origin-check.enabled=false` and `app.origin-secret=` in `config/application-prod.properties`, as in the template.
   - The secret is in `terraform.tfstate`, because the distribution's config holds it.
 
-**GitHub deploy access (`github.tf`):** an OIDC provider for `token.actions.githubusercontent.com` (one per account) and the role `wants-github-deploy-site`, limited to `s3:ListBucket` and `Put`/`DeleteObject` on the bucket, plus `cloudfront:CreateInvalidation` on the distribution.
+**GitHub deploy access (`github.tf`):**
+- An OIDC provider for `token.actions.githubusercontent.com` (one per account) and two roles with the same trust (the master branch only):
+  - **`wants-github-deploy-site`**: `s3:ListBucket` and `Put`/`DeleteObject` on the site bucket, plus `cloudfront:CreateInvalidation` on the distribution.
+  - **`wants-github-deploy-api`**:
+    - `ssm:SendCommand` on the `AWS-RunShellScript` document, and on instances whose tag is `ssm:resourceTag/Name = wants-api`. Matching on the tag rather than an instance ID survives instance replacement.
+    - `ec2:DescribeInstances` and `ssm:GetCommandInvocation` on `*`. Both are read-only and support no resource-level scoping.
+- The API instance role has the managed policy `AmazonSSMManagedInstanceCore` attached, so the preinstalled SSM agent can register and receive commands over outbound HTTPS.
+- After that policy is first attached to a running instance, the agent may take a while to re-register. `aws ssm describe-instance-information` shows when it has, and `sudo systemctl restart amazon-ssm-agent` speeds it up.
 
 - **Password:** the database password is an SSM `SecureString` (`aws_ssm_parameter.db_password`, default name `/wants/db-password`) using the AWS-managed `aws/ssm` key.
   - It is set through **`value_wo`, a write-only argument, fed from an `ephemeral = true` variable**, so it never enters the plan or `terraform.tfstate`. Both need Terraform 1.11 or later, hence `required_version = ">= 1.11"`.
