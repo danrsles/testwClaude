@@ -11,3 +11,9 @@
 spring.datasource.url=jdbc:postgresql://CHANGEME.aivencloud.com:CHANGEME/defaultdb?sslmode=verify-full&sslrootcert=C:/Users/CHANGEME/.aiven/ca.pem
 spring.datasource.username=avnadmin
 spring.datasource.password=CHANGEME
+
+# Requests from the Vite proxy carry no X-Origin-Secret header, so switch the
+# CloudFront-only check off when running the prod profile locally. With the
+# check off, ORIGIN_SECRET is not needed.
+app.origin-check.enabled=false
+app.origin-secret=

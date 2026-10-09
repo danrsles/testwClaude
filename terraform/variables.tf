@@ -11,7 +11,7 @@ variable "instance_type" {
 }
 
 variable "image" {
-  description = "Docker Hub image to run. The image itself selects the prod profile."
+  description = "Docker Hub image for the API server. The image itself selects the prod profile."
   type        = string
   default     = "danrsles/wants-api:latest"
 }
@@ -21,10 +21,10 @@ variable "ssh_cidr" {
   type        = string
 }
 
-variable "app_cidr" {
-  description = "CIDR allowed to reach the API port. Use 0.0.0.0/0 to make it public; the API has no authentication, so a single /32 is safer while testing."
+variable "github_repository" {
+  description = "owner/name of the GitHub repository whose master branch may deploy the site."
   type        = string
-  default     = "0.0.0.0/0"
+  default     = "danrsles/testwClaude"
 }
 
 variable "key_name" {
@@ -81,4 +81,10 @@ variable "db_password_parameter" {
   description = "SSM parameter name for the database password."
   type        = string
   default     = "/wants/db-password"
+}
+
+variable "origin_secret_parameter" {
+  description = "SSM parameter name for the header value that proves a request came through CloudFront."
+  type        = string
+  default     = "/wants/origin-secret"
 }

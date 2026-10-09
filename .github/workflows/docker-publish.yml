@@ -1,4 +1,4 @@
-name: Build and publish Docker image
+name: Build, publish and deploy
 
 # Runs on every commit to master. workflow_dispatch allows a manual run
 # from the Actions tab, which is useful for testing this before merging.
@@ -7,12 +7,9 @@ on:
     branches: [master]
   workflow_dispatch:
 
-env:
-  IMAGE_NAME: danrsles/wants-api
-
 jobs:
-  test:
-    name: Test
+  test-api:
+    name: Test API
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,9 +26,43 @@ jobs:
       - name: Run tests
         run: mvn -B test
 
-  publish:
-    name: Publish image
-    needs: test
+  test-web:
+    name: Test and build web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      # Vite 8 needs Node 20.19+ or 22.12+.
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      # The component tests stub the api module, so no backend is needed.
+      - run: npm test
+      # Type-checks (tsc -b) and bundles into dist/.
+      - run: npm run build
+
+      # The deploy job uploads exactly this tested build rather than building
+      # its own.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: frontend/dist
+          retention-days: 7
+
+  # The API image, published only when both test jobs pass, so the deployed API
+  # and site always come from the same tested commit.
+  publish-api:
+    name: Publish API image
+    needs: [test-api, test-web]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +84,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: danrsles/wants-api
           tags: |
             type=raw,value=latest
             type=sha,format=short
@@ -67,3 +98,49 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Uploads the React build to S3 and refreshes CloudFront. Runs only on master
+  # (the AWS role trusts nothing else) and only once the repository variables
+  # from `terraform output` exist; until then it shows as skipped.
+  deploy-web:
+    name: Deploy web
+    needs: [test-api, test-web]
+    if: github.ref == 'refs/heads/master' && vars.SITE_BUCKET != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # ask GitHub for the OIDC token that AWS trades for credentials
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: dist
+
+      # No AWS keys: the role trusts GitHub's OIDC tokens for this repository's
+      # master branch only (terraform/github.tf).
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # Order matters so visitors never load an index.html whose scripts are
+      # missing: new hashed assets first, then index.html and the rest, and only
+      # then delete the assets no build refers to any more.
+      - name: Upload to S3
+        env:
+          BUCKET: ${{ vars.SITE_BUCKET }}
+        run: |
+          aws s3 sync dist/assets "s3://$BUCKET/assets" \
+            --cache-control "public, max-age=31536000, immutable"
+          aws s3 sync dist "s3://$BUCKET" --exclude "assets/*" --delete \
+            --cache-control "no-cache"
+          aws s3 sync dist/assets "s3://$BUCKET/assets" --delete
+
+      # index.html is no-cache already; this makes the edge drop any copy it
+      # holds right now. The first 1,000 invalidation paths a month are free.
+      - name: Refresh CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths "/index.html" "/"

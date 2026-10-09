@@ -42,7 +42,34 @@ resource "aws_ssm_parameter" "db_password" {
   }
 }
 
-# --- Instance identity: may read that one parameter and nothing else ---------
+# --- Origin secret -----------------------------------------------------------
+
+# CloudFront adds this value as the X-Origin-Secret header on every request it
+# forwards to the API, and the API rejects requests without it. The security
+# group already admits only CloudFront's address ranges, but those ranges are
+# shared by every CloudFront customer; the header proves the request came
+# through *this* distribution.
+#
+# Unlike the DB password this one is generated here and also sits in the
+# CloudFront distribution's config, so it is in terraform.tfstate. To rotate
+# it, taint random_password.origin_secret and apply.
+resource "random_password" "origin_secret" {
+  length  = 48
+  special = false
+}
+
+resource "aws_ssm_parameter" "origin_secret" {
+  name        = var.origin_secret_parameter
+  description = "Header value CloudFront sends to prove a request came through the distribution"
+  type        = "SecureString"
+  value       = random_password.origin_secret.result
+
+  tags = {
+    Name = "wants-api"
+  }
+}
+
+# --- Instance identity: may read those two parameters and nothing else -------
 
 data "aws_iam_policy_document" "ec2_assume" {
   statement {
@@ -61,8 +88,11 @@ resource "aws_iam_role" "api" {
 
 data "aws_iam_policy_document" "read_db_password" {
   statement {
-    actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.db_password.arn]
+    actions = ["ssm:GetParameter"]
+    resources = [
+      aws_ssm_parameter.db_password.arn,
+      aws_ssm_parameter.origin_secret.arn,
+    ]
   }
 }
 
@@ -79,6 +109,9 @@ resource "aws_iam_instance_profile" "api" {
 
 # --- Network -----------------------------------------------------------------
 
+# The description is out of date: the app port now admits only CloudFront (rule
+# below). It is left alone because changing a security group's description
+# makes AWS replace the group, which fails while an instance uses it.
 resource "aws_security_group" "app" {
   name        = "wants-api"
   description = "Wants API: public app port, SSH from one address only"
@@ -89,10 +122,19 @@ resource "aws_security_group" "app" {
   }
 }
 
+# Only CloudFront may call the API. AWS maintains this prefix list of the
+# addresses CloudFront uses to reach origins, so the rule stays correct as they
+# change. A prefix list counts against the security group's rule quota by its
+# maximum size (about 55 entries of the default 60), so leave room when adding
+# rules here.
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 resource "aws_vpc_security_group_ingress_rule" "app" {
   security_group_id = aws_security_group.app.id
-  description       = "Wants API"
-  cidr_ipv4         = var.app_cidr
+  description       = "Wants API, from CloudFront only"
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
   from_port         = var.app_port
   to_port           = var.app_port
   ip_protocol       = "tcp"
@@ -129,15 +171,16 @@ resource "aws_instance" "app" {
   associate_public_ip_address = true
 
   # The certificate travels in user data because it is not secret; the
-  # password does not, only the name of the parameter holding it.
+  # password and origin secret do not, only the names of their parameters.
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    image                 = var.image
-    app_port              = var.app_port
-    region                = var.region
-    db_url                = var.db_url
-    db_user               = var.db_user
-    db_password_parameter = aws_ssm_parameter.db_password.name
-    db_ca_cert            = trimspace(file("${path.module}/${var.db_ca_cert_path}"))
+    image                   = var.image
+    app_port                = var.app_port
+    region                  = var.region
+    db_url                  = var.db_url
+    db_user                 = var.db_user
+    db_password_parameter   = aws_ssm_parameter.db_password.name
+    origin_secret_parameter = aws_ssm_parameter.origin_secret.name
+    db_ca_cert              = trimspace(file("${path.module}/${var.db_ca_cert_path}"))
   })
 
   # Replace the instance when the bootstrap script changes, so the running

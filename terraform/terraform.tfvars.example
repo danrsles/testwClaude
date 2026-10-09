@@ -1,6 +1,5 @@
 # Copy to terraform.tfvars (git-ignored) and fill in real values.
 ssh_cidr = "CHANGEME/32" # your public IP
-app_cidr = "CHANGEME/32" # your public IP, or 0.0.0.0/0 for a public API
 key_name = "CHANGEME"    # an existing EC2 key pair name
 
 # Hosted database (Aiven). sslrootcert must stay /certs/ca.pem: that is where
