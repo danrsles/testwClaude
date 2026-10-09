@@ -9,3 +9,4 @@ target/
 *.iml
 CLAUDE.md
 compose.yaml
+frontend/

@@ -4,7 +4,7 @@ A small full-stack app for tracking things you want to do, eat, play or visit. E
 
 - **Backend** — Spring Boot 3.5.6 on Java 21, PostgreSQL 18 (hosted on Aiven, or PostGIS in Docker locally), Flyway migrations
 - **Frontend** — React + TypeScript, Vite, React Router, Tailwind CSS v4
-- **Infrastructure** — Docker image published to Docker Hub by GitHub Actions, Terraform for a single-instance AWS deployment
+- **Infrastructure** — the React app on S3 behind CloudFront (HTTPS), the API on one EC2 instance reachable only through CloudFront, all in Terraform; GitHub Actions tests both halves, publishes the API image and deploys the site
 
 ## Prerequisites
 
@@ -50,7 +50,9 @@ The deployed backend uses an Aiven PostgreSQL database. To run your local backen
    mvn spring-boot:run -Dspring-boot.run.profiles=prod
    ```
 
-`config/application-prod.properties` is git-ignored. `verify-full` encrypts the connection and checks the server's certificate and host name. Use forward slashes in the path, even on Windows. **This is the real database**, so anything you do appears there too.
+`config/application-prod.properties` is git-ignored. Keep `app.origin-check.enabled=false` and `app.origin-secret=` in it, as the template does. Requests from the Vite proxy carry no CloudFront header, so that check must be off on a laptop.
+
+The free Aiven plan allows only a few connections, and the `prod` profile caps its pool at 7 (`spring.datasource.hikari.maximum-pool-size`). If startup fails with *"remaining connection slots are reserved for roles with the SUPERUSER attribute"*, other clients, usually the deployed API server, are holding them.
 
 ### 4. Run the frontend
 
@@ -195,19 +197,45 @@ If `DB_URL` is missing, startup fails with `'url' must start with "jdbc"`. That 
 
 ## Continuous integration
 
-`.github/workflows/docker-publish.yml` runs on every push to `master`, and can be triggered manually from the Actions tab. It runs the tests, then builds and pushes the image to Docker Hub tagged `latest` and `sha-<commit>`, so every published image traces back to its commit.
+`.github/workflows/docker-publish.yml` runs on every push to `master`, and can be triggered manually from the Actions tab.
 
-It requires two repository secrets: `DOCKERHUB_USERNAME`, and `DOCKERHUB_TOKEN` — a Docker Hub access token, not an account password.
+| Job | What it does |
+|---|---|
+| Test API | `mvn test` |
+| Test and build web | `npm ci`, `lint`, `test`, `build` on Node 22; keeps `dist/` as an artifact |
+| Publish API image | when both test jobs pass, pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>` |
+| Deploy web | when both test jobs pass, uploads that tested `dist/` to S3 and refreshes CloudFront |
+
+The deploy job has **no AWS keys**. GitHub issues it a short-lived OIDC token, and AWS exchanges it for temporary credentials for a role that only this repository's `master` branch can assume. The role may only write to the site bucket and invalidate the distribution.
+
+It needs two repository **secrets**, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token, not the account password). It also needs three repository **variables** (Settings → Secrets and variables → Actions → Variables), taken from `terraform output` after the first apply:
+
+| Variable | From |
+|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | `terraform output -raw github_deploy_role_arn` |
+| `SITE_BUCKET` | `terraform output -raw site_bucket` |
+| `CLOUDFRONT_DISTRIBUTION_ID` | `terraform output -raw cloudfront_distribution_id` |
+
+Until `SITE_BUCKET` is set, the deploy job shows as skipped. Publishing the API image does **not** redeploy the API server; it keeps the image it pulled at first boot.
 
 ## Deploying to AWS
 
-`terraform/` provisions one EC2 instance for the API. It installs Docker on boot and runs the published image, which connects to the hosted Aiven PostgreSQL database. There is no database on the instance.
+`terraform/` builds the whole site. CloudFront is the only public way in: it serves the React app from a private S3 bucket and forwards `/api/*` to the API server. The API server's port 8080 admits only CloudFront's address ranges, and Spring additionally rejects any request without CloudFront's secret header.
 
 ```
-Browser / curl ──► EC2 (Elastic IP, :8080)  wants-api container, prod profile
-                     │  at boot: reads the DB password from SSM Parameter Store
-                     └──TLS (verify-full)──► Aiven PostgreSQL
+Browser ──HTTPS──► CloudFront (https://<id>.cloudfront.net)
+                    ├─ /*      → S3 bucket (private)       the React build
+                    └─ /api/*  → strip /api, add X-Origin-Secret
+                                 → API server :8080 (admits CloudFront only)
+                                     │ at boot: DB password + origin secret from SSM
+                                     └──TLS (verify-full)──► Aiven PostgreSQL
 ```
+
+Two CloudFront Functions in `terraform/functions/` do what a web server would otherwise do:
+- `strip-api-prefix.js` turns `/api/wants` into `/wants`, the same rewrite as the Vite dev proxy.
+- `spa-fallback.js` serves `index.html` for any path without a file extension, such as `/profile`, so client-side routes survive a refresh.
+
+Approximate cost: the API server is ~$13 a month (instance, Elastic IP, disk). S3 and CloudFront are effectively free at this size, within CloudFront's always-free 1 TB and 10 million requests a month.
 
 **Before the first apply**
 
@@ -229,41 +257,44 @@ cp terraform.tfvars.example terraform.tfvars   # then fill it in
 terraform init
 terraform plan
 terraform apply
-terraform output public_ip
-terraform output api_url
+terraform output site_url
 ```
 
-**After the first apply,** add the `public_ip` output to the Aiven service's **Allowed IP addresses**, if you restrict them. It's an Elastic IP, so it stays the same when the instance is replaced. Until it's allowed, the app can't reach the database: the container restarts on its own and connects once the address is added.
+Open `site_url` in a browser once CI has uploaded the site (see **Continuous integration**: set the three repository variables, then merge or re-run the workflow). The API is reachable at `<site_url>api/wants`. Port 8080 on the server is closed to everyone else, including you.
 
-Allow two to three minutes after `apply` before the API answers. `terraform apply` returns as soon as the instance launches, while cloud-init is still installing Docker and pulling the image.
+**After the first apply,** add the `api_public_ip` output to the Aiven service's **Allowed IP addresses**, if you restrict them. It's the address the API server connects *out* from. It's an Elastic IP, so it stays the same when the instance is replaced. Until it's allowed, the app can't reach the database: the container restarts on its own and connects once the address is added.
+
+Allow two to three minutes after `apply` before the API answers. A new CloudFront distribution also takes a few minutes to reach every edge location. `terraform apply` returns as soon as the instance launches, while cloud-init is still installing Docker and pulling the image.
 
 What the instance gets at boot (`user_data.sh.tftpl`):
 - `/opt/wants/ca.pem`, the certificate, sent in the user data. It isn't secret.
-- `/opt/wants/.env`, holding `DB_URL` and `DB_USER`, plus `DB_PASSWORD` fetched from SSM.
+- `/opt/wants/.env`, holding `DB_URL` and `DB_USER`, plus `DB_PASSWORD` and `ORIGIN_SECRET` fetched from SSM.
 - `/opt/wants/compose.yaml`, which runs the image with `ca.pem` mounted read-only at `/certs/ca.pem`.
+
+**The origin secret** is generated by Terraform (`random_password`) and stored in SSM as `/wants/origin-secret`. CloudFront sends it as the `X-Origin-Secret` header, and Spring's `OriginSecretFilter` returns 403 without it. The check is switched on by `app.origin-check.enabled=true` in the `prod` profile, and it fails closed: with the switch on, a missing or empty secret stops the app from starting rather than leaving the API open. It exists because CloudFront's address ranges are shared by every CloudFront customer, so the firewall alone would also admit someone else's distribution pointed at this server. Unlike the database password it *is* in `terraform.tfstate`, because it's also part of the distribution's configuration. To rotate it, run `terraform apply -replace=random_password.origin_secret`.
 
 **The password** goes to SSM Parameter Store as a `SecureString` (`/wants/db-password`), encrypted with the free AWS-managed key. It is a *write-only* value (`value_wo`) from an *ephemeral* variable, so Terraform sends it to AWS but keeps no copy: it is in neither the plan nor `terraform.tfstate`. The instance's IAM role may read that one parameter and nothing else, so the password never appears in the instance's user data either. Because Terraform stores nothing to compare against, it can't detect a password change on its own. After changing the password, set the new one in `TF_VAR_db_password`, raise `db_password_version` in `terraform.tfvars`, apply, and restart the app.
 
 Debugging on the instance:
 
 ```bash
-ssh -i <key>.pem ec2-user@<public-ip>
+ssh -i <key>.pem ec2-user@<api_public_ip>      # or: terraform output ssh_api
 sudo cat /var/log/cloud-init-output.log            # the boot script's output
 cd /opt/wants && sudo docker compose logs -f app   # the app's logs
 ```
 
-`terraform destroy` removes the instance, Elastic IP, IAM role and SSM parameter. The data lives in Aiven, so destroying or replacing the instance loses nothing. Because `user_data_replace_on_change` is set, changing the image, the certificate or any database setting replaces the instance. Changing only the password updates SSM; restart the app for it to take effect.
+`terraform destroy` removes the instance, Elastic IP, IAM roles, SSM parameters, the S3 bucket and its files, and the CloudFront distribution. The data lives in Aiven, so destroying or replacing the instance loses nothing. Because `user_data_replace_on_change` is set, changing the image, the certificate or any database setting replaces the instance. Changing only the password updates SSM; restart the app for it to take effect.
 
 ## Known gaps
 
 These are deliberate omissions, not oversights:
 
-- **No authentication.** Anyone who can reach the API can read and write every want. The Terraform defaults therefore restrict the API port by CIDR.
+- **No authentication.** Anyone who can open the site can read and write every want through it. The API server itself admits only CloudFront.
 - **No user accounts.** Profiles can be managed through `/user/profiles`, but users themselves can't be created through the API. `dani` exists only because a migration seeds them, and the frontend acts as `userId: 1` (`DEFAULT_USER_ID` in `frontend/src/currentUser.ts`).
 - **No avatar uploads.** `s3Url` is a plain URL field until S3 is set up.
 - **The header badge does not refresh on edit.** The badge and the profile page each fetch the profile, so a nickname changed on `/profile` reaches the header on the next page load. A shared server cache such as TanStack Query would fix this.
 - **No DTO layer.** Entities serialize straight to JSON, so `GET /wants` embeds the full user object. A field that should not be exposed would need a DTO.
-- **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
+- **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext, including the CloudFront origin secret. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed
 

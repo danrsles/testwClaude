@@ -96,6 +96,7 @@ A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` 
 - `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`, `UserProfileRepository`)
 - `services` — business logic, the only layer controllers talk to (`WantService`, `UserProfileService`)
 - `controllers` — HTTP endpoints (`WantController`, `UserProfileController`)
+- `security` — `OriginSecretFilter`, which rejects requests that did not come through CloudFront
 
 Controllers depend on services, never on repositories directly, and all dependencies are injected through constructors rather than fields, which keeps them explicit and testable without a container.
 
@@ -155,13 +156,27 @@ Configuration files:
 - It is published on host port **5433**, rather than 5432, to avoid clashing with a locally installed PostgreSQL, and so a database client can connect. Spring finds the port itself.
 - PostgreSQL 18 images keep data under `/var/lib/postgresql/<version>`, which is why the volume mounts at `/var/lib/postgresql` and not `.../data`.
 
+**Connection limit.** The free Aiven plan allows `max_connections = 20`, a few of them reserved for superusers (`avnadmin` is not one), and has no PgBouncer. The `prod` profile sets `spring.datasource.hikari.maximum-pool-size=7`, down from Hikari's default of 10, so the deployed server and a laptop run of the `prod` profile (7 + 7) still leave room for the Aiven console within the roughly 17 usable slots. When slots run out, startup fails in Flyway with *"remaining connection slots are reserved for roles with the SUPERUSER attribute"*. Terraform replaces the API instance destroy-first (no `create_before_destroy`), so old and new servers do not overlap. Switching to create-before-destroy would make them overlap, so budget for both.
+
 **Hosted database.** Aiven requires TLS; use `sslmode=verify-full&sslrootcert=<path to Aiven's ca.pem>` in the JDBC URL. `ca.pem` is not secret, but is kept outside the repository. In a `.properties` file the path must use forward slashes even on Windows, because backslashes are escapes. Running the `prod` profile locally writes to the real database.
 
 `mvn test` needs neither database, because `@WebMvcTest` loads only the web slice.
 
 ## Continuous integration
 
-`.github/workflows/docker-publish.yml` runs on every push to `master` and can be triggered manually from the Actions tab. It runs `mvn test` first, then builds the image and pushes it to Docker Hub as `danrsles/wants-api`, tagged `latest` and `sha-<commit>` so any published image traces back to its commit.
+`.github/workflows/docker-publish.yml` runs on every push to `master` and can be triggered manually from the Actions tab.
+- `test-api` runs `mvn test`.
+- `test-web` runs `npm ci`, `lint`, `test` and `build` in `frontend/` on Node 22, and uploads `dist/` as an artifact.
+- When both pass, two jobs run:
+  - `publish-api` pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>`.
+  - `deploy-web` downloads that same `dist/`, so the tested build is the deployed build, and syncs it to S3. It then invalidates `/index.html` and `/` in CloudFront.
+
+**`deploy-web` details:**
+- **Upload order is deliberate.** New `assets/` go up first (`immutable`, one year), then everything else with `--delete` and `no-cache`, and only then old assets are deleted. A visitor never gets an `index.html` whose scripts are missing.
+- **It authenticates with GitHub OIDC**, not stored keys: `aws-actions/configure-aws-credentials` assumes `vars.AWS_DEPLOY_ROLE_ARN`, and the job needs `permissions: id-token: write`. The role (`terraform/github.tf`) trusts only `repo:<github_repository>:ref:refs/heads/master`, so `workflow_dispatch` from any other branch fails to assume it.
+- **It reads three repository *variables*** (not secrets): `AWS_DEPLOY_ROLE_ARN`, `SITE_BUCKET` and `CLOUDFRONT_DISTRIBUTION_ID`, from `terraform output`. It is skipped (`if: vars.SITE_BUCKET != ''`) until they exist.
+
+Publishing the API image does not redeploy the API instance.
 
 It needs two repository secrets, set under Settings → Secrets and variables → Actions:
 
@@ -172,15 +187,38 @@ The test job needs no database, because the tests are `@WebMvcTest` slices. A fu
 
 ## Deployment (Terraform)
 
-`terraform/` runs **one API instance** against the hosted Aiven database; there is no database on AWS. The two-instance layout (a public nginx UI server in front of a private API) is planned but not built.
+`terraform/` runs the API on **one EC2 instance** and the React app on **S3 + CloudFront**. There is no database on AWS.
+
+**Site (`site.tf`):**
+- **Bucket:** the S3 bucket `wants-site-<account id>` is fully private (public access block). CloudFront reads it through Origin Access Control, and the bucket policy names this distribution's ARN.
+- **Behaviours:**
+  - The default serves the bucket with `Managed-CachingOptimized`.
+  - `/api/*` goes to the API origin with `Managed-CachingDisabled` and `Managed-AllViewerExceptHostHeader`. Host must be the origin's own name or the request misses the instance.
+- **The API origin** must be a DNS name, so it is `aws_eip.app.public_dns`. It is plain HTTP to port 8080, so the edge-to-instance leg is unencrypted.
+- **Edge functions** live in `terraform/functions/`, are attached at viewer-request, and run on `cloudfront-js-2.0`.
+  - `strip-api-prefix.js` mirrors the Vite proxy's rewrite. Keep the two in step.
+  - `spa-fallback.js` rewrites extension-less paths to `/index.html`.
+  - SPA fallback is deliberately **not** done with custom error responses. Those apply to every behaviour and would turn the API's real 404s into HTML.
+- `price_class = "PriceClass_100"` and the default `*.cloudfront.net` certificate. A custom domain would need an ACM certificate in us-east-1.
+
+**API access:**
+- **Firewall:** port 8080 admits only the managed prefix list `com.amazonaws.global.cloudfront.origin-facing`. A prefix list counts against the security group's rule quota by its maximum size (about 55 of the default 60), so there is little room for more rules on that group. The group's description still says "public app port"; it is stale on purpose, because changing a security group's description forces replacement.
+- **Origin secret:** `random_password.origin_secret` is sent by CloudFront as `X-Origin-Secret`, and stored in SSM (`/wants/origin-secret`) for the instance.
+  - `OriginSecretFilter` compares it in constant time and returns a bare 403 on mismatch.
+  - It is switched on by a separate flag, `app.origin-check.enabled` (default `false`), not by the secret being non-empty. That makes it **fail closed**: enabled with a blank secret, the constructor throws and the app does not start. Never fold the switch back into "empty secret means off"; an empty `ORIGIN_SECRET` would then silently open the API.
+  - `application-prod.properties` sets `app.origin-check.enabled=true` and `app.origin-secret=${ORIGIN_SECRET}`. `@Value` placeholders are strict, so a missing variable fails startup with "Could not resolve placeholder". That is unlike the datasource placeholders, which only fail later.
+  - Running the prod profile from a laptop needs `app.origin-check.enabled=false` and `app.origin-secret=` in `config/application-prod.properties`, as in the template.
+  - The secret is in `terraform.tfstate`, because the distribution's config holds it.
+
+**GitHub deploy access (`github.tf`):** an OIDC provider for `token.actions.githubusercontent.com` (one per account) and the role `wants-github-deploy-site`, limited to `s3:ListBucket` and `Put`/`DeleteObject` on the bucket, plus `cloudfront:CreateInvalidation` on the distribution.
 
 - **Password:** the database password is an SSM `SecureString` (`aws_ssm_parameter.db_password`, default name `/wants/db-password`) using the AWS-managed `aws/ssm` key.
   - It is set through **`value_wo`, a write-only argument, fed from an `ephemeral = true` variable**, so it never enters the plan or `terraform.tfstate`. Both need Terraform 1.11 or later, hence `required_version = ">= 1.11"`.
   - Supply it as `TF_VAR_db_password` in the shell, never in `terraform.tfvars`. `terraform.tfvars` outranks the environment variable, so a leftover line there would silently override it.
   - Write-only values can't be diffed, so Terraform only re-sends the password when `db_password_version` changes. Raise it whenever the password changes.
-  - The instance profile's only permission is `ssm:GetParameter` on that one ARN. No `kms:Decrypt` is needed, because the managed key's policy allows decryption through SSM for principals in the account.
+  - The instance profile's only permission is `ssm:GetParameter` on the two parameter ARNs, the DB password and the origin secret. No `kms:Decrypt` is needed, because the managed key's policy allows decryption through SSM for principals in the account.
   - The boot script fetches the password with the preinstalled AWS CLI, under IMDSv2 (`http_tokens = "required"`).
-- **The boot script must never `set -x`:** it would print the password into `/var/log/cloud-init-output.log`.
+- **The boot script must never `set -x`:** it would print the password and the origin secret into `/var/log/cloud-init-output.log`.
 - **Certificate:** `ca.pem` is read from `terraform/` (git-ignored, `terraform/*.pem`), passed through `trimspace(file(...))` in the user data, written to `/opt/wants/ca.pem`, and mounted at `/certs/ca.pem`. A validation on `db_url` requires `sslrootcert=/certs/ca.pem` and rejects a laptop path by mistake.
 - **`.env` on the instance** quotes every value in single quotes, so Compose doesn't interpret the `&` in the JDBC URL.
 - **Fixed address:** an Elastic IP is associated separately (`aws_eip_association`), so it survives instance replacement and can be added to Aiven's IP allowlist. `associate_public_ip_address` stays true, so the instance has outbound access before the association happens.

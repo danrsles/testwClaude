@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-# No `set -x`: it would echo the database password into the cloud-init log.
+# No `set -x`: it would echo the secrets into the cloud-init log.
 
 # Docker Engine plus the compose plugin (compose is not in the AL2023 repos).
 dnf update -y
@@ -24,14 +24,14 @@ ${db_ca_cert}
 CERTEOF
 chmod 644 ca.pem
 
-# The password is never in user data: the instance role may read this one SSM
-# parameter, and nothing else.
-DB_PASSWORD="$(aws ssm get-parameter \
-  --region '${region}' \
-  --name '${db_password_parameter}' \
-  --with-decryption \
-  --query Parameter.Value \
-  --output text)"
+# Secrets are never in user data: the instance role may read these two SSM
+# parameters, and nothing else.
+ssm_get() {
+  aws ssm get-parameter --region '${region}' --name "$1" \
+    --with-decryption --query Parameter.Value --output text
+}
+DB_PASSWORD="$(ssm_get '${db_password_parameter}')"
+ORIGIN_SECRET="$(ssm_get '${origin_secret_parameter}')"
 
 # Single quotes keep Compose from interpreting characters in the values, such as
 # the & in the URL.
@@ -40,9 +40,10 @@ umask 077
   printf "DB_URL='%s'\n" '${db_url}'
   printf "DB_USER='%s'\n" '${db_user}'
   printf "DB_PASSWORD='%s'\n" "$DB_PASSWORD"
+  printf "ORIGIN_SECRET='%s'\n" "$ORIGIN_SECRET"
 } > .env
 umask 022
-unset DB_PASSWORD
+unset DB_PASSWORD ORIGIN_SECRET
 
 cat > compose.yaml <<'COMPOSEEOF'
 services:
@@ -50,7 +51,8 @@ services:
     image: ${image}
     restart: unless-stopped
     # The image runs the prod profile, which reads DB_URL, DB_USER and
-    # DB_PASSWORD from the environment.
+    # DB_PASSWORD from the environment, and rejects requests whose
+    # X-Origin-Secret header does not match ORIGIN_SECRET.
     env_file: .env
     volumes:
       - ./ca.pem:/certs/ca.pem:ro
