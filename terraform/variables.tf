@@ -21,10 +21,10 @@ variable "ssh_cidr" {
   type        = string
 }
 
-variable "github_repository" {
-  description = "owner/name of the GitHub repository whose master branch may deploy the site."
+variable "github_oidc_subject_prefix" {
+  description = "Start of the `sub` claim in this repository's GitHub OIDC tokens; the deploy role trusts <prefix>:ref:refs/heads/master. The repository uses GitHub's immutable subject format, which embeds the owner and repository ids, so it survives renames and cannot be claimed by a new repository reusing the name. Read it with: gh api repos/<owner>/<repo>/actions/oidc/customization/sub (sub_claim_prefix)."
   type        = string
-  default     = "danrsles/testwClaude"
+  default     = "repo:danrsles@13107885/testwClaude@1380283664"
 }
 
 variable "key_name" {

@@ -173,7 +173,7 @@ Configuration files:
 
 **`deploy-web` details:**
 - **Upload order is deliberate.** New `assets/` go up first (`immutable`, one year), then everything else with `--delete` and `no-cache`, and only then old assets are deleted. A visitor never gets an `index.html` whose scripts are missing.
-- **It authenticates with GitHub OIDC**, not stored keys: `aws-actions/configure-aws-credentials` assumes `vars.AWS_DEPLOY_ROLE_ARN`, and the job needs `permissions: id-token: write`. The role (`terraform/github.tf`) trusts only `repo:<github_repository>:ref:refs/heads/master`, so `workflow_dispatch` from any other branch fails to assume it.
+- **It authenticates with GitHub OIDC**, not stored keys: `aws-actions/configure-aws-credentials` assumes `vars.AWS_DEPLOY_ROLE_ARN`, and the job needs `permissions: id-token: write`. The role (`terraform/github.tf`) trusts only `<github_oidc_subject_prefix>:ref:refs/heads/master`, so `workflow_dispatch` from any other branch fails to assume it. **This repository uses GitHub's immutable OIDC subject format**, `repo:danrsles@13107885/testwClaude@1380283664:...`, which embeds the owner and repository IDs, not the classic `repo:danrsles/testwClaude:...`. A trust policy written in the classic form fails with "Not authorized to perform sts:AssumeRoleWithWebIdentity". Read the real prefix with `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`.
 - **It reads three repository *variables*** (not secrets): `AWS_DEPLOY_ROLE_ARN`, `SITE_BUCKET` and `CLOUDFRONT_DISTRIBUTION_ID`, from `terraform output`. It is skipped (`if: vars.SITE_BUCKET != ''`) until they exist.
 
 Publishing the API image does not redeploy the API instance.
