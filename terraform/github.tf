@@ -28,10 +28,15 @@ data "aws_iam_policy_document" "github_assume" {
 
     # Only workflows running on master of this one repository. A pull request
     # branch, a fork or any other repository gets a token AWS will refuse.
+    # The repository uses GitHub's immutable subject format,
+    #   repo:<owner>@<owner id>/<repo>@<repo id>:ref:refs/heads/master
+    # not the classic repo:<owner>/<repo>:..., so the classic form never matches
+    # and the role assumption fails with "Not authorized to perform
+    # sts:AssumeRoleWithWebIdentity".
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/heads/master"]
+      values   = ["${var.github_oidc_subject_prefix}:ref:refs/heads/master"]
     }
   }
 }
