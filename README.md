@@ -204,6 +204,7 @@ If `DB_URL` is missing, startup fails with `'url' must start with "jdbc"`. That 
 | Test API | `mvn test` |
 | Test and build web | `npm ci`, `lint`, `test`, `build` on Node 22; keeps `dist/` as an artifact |
 | Publish API image | when both test jobs pass, pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>` |
+| Deploy API | after the image is published, tells the API server through SSM Run Command to pull it, restart, and pass a health check |
 | Deploy web | when both test jobs pass, uploads that tested `dist/` to S3 and refreshes CloudFront |
 
 The deploy job has **no AWS keys**. GitHub issues it a short-lived OIDC token, and AWS exchanges it for temporary credentials for a role that only this repository's `master` branch can assume. The role may only write to the site bucket and invalidate the distribution.
@@ -215,8 +216,17 @@ It needs two repository **secrets**, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` 
 | `AWS_DEPLOY_ROLE_ARN` | `terraform output -raw github_deploy_role_arn` |
 | `SITE_BUCKET` | `terraform output -raw site_bucket` |
 | `CLOUDFRONT_DISTRIBUTION_ID` | `terraform output -raw cloudfront_distribution_id` |
+| `AWS_DEPLOY_API_ROLE_ARN` | `terraform output -raw github_deploy_api_role_arn` |
 
-Until `SITE_BUCKET` is set, the deploy job shows as skipped. Publishing the API image does **not** redeploy the API server; it keeps the image it pulled at first boot.
+Each deploy job shows as skipped until its variable exists: `SITE_BUCKET` for the site, `AWS_DEPLOY_API_ROLE_ARN` for the API.
+
+**How the API is redeployed.** The `Deploy API` job:
+1. finds the running instance tagged `Name=wants-api`
+2. sends it [`deploy/redeploy-api.sh`](deploy/redeploy-api.sh) through **SSM Run Command**: AWS delivers the command to the SSM agent already running on the server, so there's no SSH, no open port and no key in GitHub
+3. the script runs `docker compose pull` and `up -d`, then polls the API on the server itself with the CloudFront header until it answers
+4. the job waits for the result and fails if the API isn't healthy within two minutes
+
+Requests during the restart get a brief 502 from CloudFront. There is no automatic rollback, because `latest` has already moved; to roll back, re-run the workflow for an earlier commit. Only one API deploy runs at a time.
 
 ## Deploying to AWS
 
@@ -283,7 +293,7 @@ sudo cat /var/log/cloud-init-output.log            # the boot script's output
 cd /opt/wants && sudo docker compose logs -f app   # the app's logs
 ```
 
-`terraform destroy` removes the instance, Elastic IP, IAM roles, SSM parameters, the S3 bucket and its files, and the CloudFront distribution. The data lives in Aiven, so destroying or replacing the instance loses nothing. Because `user_data_replace_on_change` is set, changing the image, the certificate or any database setting replaces the instance. Changing only the password updates SSM; restart the app for it to take effect.
+`terraform destroy` removes the instance, Elastic IP, IAM roles (including both GitHub deploy roles), SSM parameters, the S3 bucket and its files, and the CloudFront distribution. The data lives in Aiven, so destroying or replacing the instance loses nothing. Because `user_data_replace_on_change` is set, changing the image, the certificate or any database setting replaces the instance. Changing only the password updates SSM; restart the app for it to take effect.
 
 ## Known gaps
 

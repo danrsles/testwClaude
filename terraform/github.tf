@@ -1,4 +1,5 @@
-# Lets GitHub Actions deploy the React app without storing AWS keys in GitHub.
+# Lets GitHub Actions deploy the React app and the API without storing AWS keys
+# in GitHub.
 #
 # The workflow asks GitHub for a short-lived OIDC token that says "this is repo
 # X, running on branch Y", and trades it with AWS STS for temporary credentials
@@ -69,4 +70,51 @@ resource "aws_iam_role_policy" "deploy_site" {
   name   = "deploy-site"
   role   = aws_iam_role.github_deploy_site.id
   policy = data.aws_iam_policy_document.deploy_site.json
+}
+
+# --- Backend deploy -------------------------------------------------------------
+
+# A second role for redeploying the API, separate from the site role so each job
+# holds only what it needs. Same trust: this repository's master branch only.
+resource "aws_iam_role" "github_deploy_api" {
+  name               = "wants-github-deploy-api"
+  assume_role_policy = data.aws_iam_policy_document.github_assume.json
+}
+
+# Run one shell command on the API instance through SSM Run Command, and read
+# back how it went. Nothing else: no SSH, no other instances, no other
+# documents.
+data "aws_iam_policy_document" "deploy_api" {
+  # The AWS-owned document that runs a shell script. AWS documents have no
+  # account id in their ARN.
+  statement {
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ssm:${var.region}::document/AWS-RunShellScript"]
+  }
+
+  # Only instances tagged Name=wants-api. Matching on the tag rather than the
+  # instance id keeps the permission valid when the instance is replaced.
+  statement {
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ssm:resourceTag/Name"
+      values   = ["wants-api"]
+    }
+  }
+
+  # Find the instance id by tag, and poll the command's result. Neither action
+  # supports resource-level permissions, and both are read-only.
+  statement {
+    actions   = ["ec2:DescribeInstances", "ssm:GetCommandInvocation"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "deploy_api" {
+  name   = "deploy-api"
+  role   = aws_iam_role.github_deploy_api.id
+  policy = data.aws_iam_policy_document.deploy_api.json
 }
