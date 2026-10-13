@@ -83,9 +83,9 @@ export default function UserProfile({ userId }: Props) {
           {profile && !editing && (
             <div className="flex flex-wrap items-center gap-5">
               <Avatar src={profile.s3Url} alt={`${profile.nickname}'s profile picture`} size={96} />
-              <div className="min-w-0 flex-1">
+              <div className="min-w-48 flex-1">
                 <h2 className="text-2xl font-semibold">{profile.nickname}</h2>
-                <p className="text-stone-600 dark:text-stone-300">{profile.email}</p>
+                <p className="break-all text-stone-600 dark:text-stone-300">{profile.email}</p>
                 <p className="text-sm text-stone-500 dark:text-stone-400">
                   @{profile.user.username}
                 </p>
