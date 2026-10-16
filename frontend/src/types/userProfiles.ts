@@ -9,12 +9,9 @@ export interface UserProfile {
   s3Url: string | null
 }
 
-export interface UpdateUserProfileRequest {
+/** Body for creating or replacing your profile. The owner is whoever is signed in. */
+export interface UserProfileRequest {
   email: string
   nickname: string
   s3Url: string | null
-}
-
-export interface CreateUserProfileRequest extends UpdateUserProfileRequest {
-  userId: number
 }

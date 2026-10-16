@@ -2,18 +2,14 @@ import { Link } from 'react-router'
 import { useUserProfile } from '../hooks/useUserProfile'
 import Avatar from './Avatar'
 
-interface Props {
-  /** The user whose nickname and picture to show. */
-  userId: number
-}
-
 /**
- * The current user's nickname and picture, shown in the app header and linking
- * to their profile page. Renders nothing while loading or if the request fails,
- * so a profile problem never breaks the shell; the profile page shows the error.
+ * The signed-in user's nickname and picture, shown in the app header and
+ * linking to their profile page. Renders nothing while loading or if the
+ * request fails, so a profile problem never breaks the shell; the profile page
+ * shows the error.
  */
-export default function ProfileBadge({ userId }: Props) {
-  const { profile, loading, error } = useUserProfile(userId)
+export default function ProfileBadge() {
+  const { profile, loading, error } = useUserProfile()
 
   if (loading || error) return null
 

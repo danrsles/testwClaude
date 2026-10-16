@@ -47,8 +47,19 @@ jobs:
       - run: npm run lint
       # The component tests stub the api module, so no backend is needed.
       - run: npm test
-      # Type-checks (tsc -b) and bundles into dist/.
-      - run: npm run build
+      # Type-checks (tsc -b) and bundles into dist/. Vite compiles the Clerk
+      # publishable key into the bundle; it is public by design, so it is a
+      # repository variable, not a secret. Without it the site would load to a
+      # blank page, so the build refuses to run.
+      - name: Build
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$VITE_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "::error::Set the CLERK_PUBLISHABLE_KEY repository variable (Settings > Secrets and variables > Actions > Variables)"
+            exit 1
+          fi
+          npm run build
 
       # The deploy job uploads exactly this tested build rather than building
       # its own.

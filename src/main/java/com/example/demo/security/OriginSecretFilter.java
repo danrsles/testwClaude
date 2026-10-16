@@ -10,6 +10,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.security.SecurityProperties;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -25,8 +27,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * Switched on by app.origin-check.enabled, which only the prod profile sets.
  * The switch is separate from the secret so the check fails closed: when it is
  * on, a blank secret stops startup instead of quietly letting everything in.
+ *
+ * Ordered just ahead of Spring Security, so a request that skipped CloudFront
+ * is refused before its token is even looked at.
  */
 @Component
+@Order(SecurityProperties.DEFAULT_FILTER_ORDER - 1)
 public class OriginSecretFilter extends OncePerRequestFilter {
 
     static final String HEADER = "X-Origin-Secret";

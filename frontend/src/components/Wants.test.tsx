@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { getMe } from '../api/me'
 import { createWant, deleteWant, listWants, updateWant } from '../api/wants'
 import type { Category, Want } from '../types/wants'
 import Wants from './Wants'
@@ -15,13 +16,19 @@ vi.mock('../api/wants', () => ({
   deleteWant: vi.fn(),
 }))
 
-function want(id: number, message: string, category: Category = 'FOOD'): Want {
-  return { id, message, category, user: { id: 1, username: 'dani' } }
+vi.mock('../api/me', () => ({ getMe: vi.fn() }))
+
+const DANI = { id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null }
+const SAM = { id: 2, username: 'sam', clerkId: 'user_sam', email: null, lastSignInAt: null }
+
+function want(id: number, message: string, category: Category = 'FOOD', owner = DANI): Want {
+  return { id, message, category, userId: owner.id, username: owner.username }
 }
 
 describe('Wants', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(getMe).mockResolvedValue(DANI)
     vi.mocked(listWants).mockResolvedValue([
       want(1, 'Ramen downtown'),
       want(2, 'Dune Part Two', 'MOVIE'),
@@ -44,7 +51,7 @@ describe('Wants', () => {
     await userEvent.type(input, 'Tacos')
     await userEvent.click(screen.getByRole('button', { name: 'Add' }))
 
-    expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD', userId: 1 })
+    expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD' })
     await waitFor(() => expect(input).toHaveValue(''))
   })
 
@@ -75,7 +82,7 @@ describe('Wants', () => {
     render(<Wants />)
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Edit' })[0])
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Edit' }))[0])
     const editor = screen.getByLabelText('Edit want')
     await userEvent.clear(editor)
     await userEvent.type(editor, 'Ramen uptown')
@@ -84,7 +91,6 @@ describe('Wants', () => {
     expect(updateWant).toHaveBeenCalledWith(1, {
       message: 'Ramen uptown',
       category: 'FOOD',
-      userId: 1,
     })
   })
 
@@ -93,8 +99,22 @@ describe('Wants', () => {
     render(<Wants />)
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0])
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Delete' }))[0])
 
     expect(deleteWant).toHaveBeenCalledWith(1)
+  })
+
+  it("offers edit controls only on the signed-in user's own wants", async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown'),
+      want(2, 'Dune Part Two', 'MOVIE', SAM),
+    ])
+    render(<Wants />)
+    await screen.findByText('Dune Part Two')
+
+    // One set of controls, for dani's want; sam's row is read-only.
+    expect(await screen.findAllByRole('button', { name: 'Edit' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1)
+    expect(screen.getAllByLabelText('Change category')).toHaveLength(1)
   })
 })
