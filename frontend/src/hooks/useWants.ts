@@ -12,8 +12,8 @@ export interface UseWants {
   error: string | null
   refresh: () => Promise<void>
   /** Each mutation resolves true on success, false if the API rejected it. */
-  add: (message: string, category: Category, userId: number) => Promise<boolean>
-  update: (id: number, message: string, category: Category, userId: number) => Promise<boolean>
+  add: (message: string, category: Category) => Promise<boolean>
+  update: (id: number, message: string, category: Category) => Promise<boolean>
   remove: (id: number) => Promise<boolean>
 }
 
@@ -74,14 +74,13 @@ export function useWants(filter: Category | ''): UseWants {
   )
 
   const add = useCallback(
-    (message: string, category: Category, userId: number) =>
-      mutate(() => createWant({ message, category, userId })),
+    (message: string, category: Category) => mutate(() => createWant({ message, category })),
     [mutate],
   )
 
   const update = useCallback(
-    (id: number, message: string, category: Category, userId: number) =>
-      mutate(() => updateWant(id, { message, category, userId })),
+    (id: number, message: string, category: Category) =>
+      mutate(() => updateWant(id, { message, category })),
     [mutate],
   )
 

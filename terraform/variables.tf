@@ -38,6 +38,19 @@ variable "app_port" {
   default     = 8080
 }
 
+# --- Login (Clerk) -------------------------------------------------------------
+
+variable "clerk_issuer" {
+  description = "Clerk Frontend API URL, the issuer of session tokens (Clerk dashboard > Configure > API keys, or decode it from the pk_ key). Not secret, so the project's instance is the default. Override it in terraform.tfvars to use a different Clerk instance."
+  type        = string
+  default     = "https://enabled-walleye-998.clerk.accounts.dev"
+
+  validation {
+    condition     = startswith(var.clerk_issuer, "https://") && !endswith(var.clerk_issuer, "/")
+    error_message = "clerk_issuer must be an https:// URL with no trailing slash, exactly as it appears in the token's iss claim."
+  }
+}
+
 # --- Database (Aiven PostgreSQL) ---------------------------------------------
 
 variable "db_url" {

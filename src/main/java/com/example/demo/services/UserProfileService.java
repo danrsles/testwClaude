@@ -1,46 +1,37 @@
 package com.example.demo.services;
 
-import java.util.List;
-
 import com.example.demo.models.User;
 import com.example.demo.models.UserProfile;
 import com.example.demo.repositories.UserProfileRepository;
-import com.example.demo.repositories.UserRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * The signed-in user's own profile, and nobody else's. Profiles hold email
+ * addresses, so there is deliberately no way to list or read another user's.
+ */
 @Service
 public class UserProfileService {
 
     private final UserProfileRepository profileRepository;
-    private final UserRepository userRepository;
+    private final UserService userService;
 
-    public UserProfileService(UserProfileRepository profileRepository, UserRepository userRepository) {
+    public UserProfileService(UserProfileRepository profileRepository, UserService userService) {
         this.profileRepository = profileRepository;
-        this.userRepository = userRepository;
-    }
-
-    public List<UserProfile> findAll() {
-        return profileRepository.findAll();
-    }
-
-    /** A list rather than an Optional, so the list endpoint keeps one shape whether filtered or not. */
-    public List<UserProfile> findByUserId(Long userId) {
-        return profileRepository.findByUserId(userId).stream().toList();
-    }
-
-    public UserProfile findById(Long profileId) {
-        return profileRepository.findById(profileId)
-                .orElseThrow(() -> new UserProfileNotFoundException(profileId));
+        this.userService = userService;
     }
 
     @Transactional
-    public UserProfile create(Long userId, String email, String nickname, String s3Url) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new UserNotFoundException(userId));
-        if (profileRepository.existsByUserId(userId)) {
-            throw new UserProfileConflictException("User " + userId + " already has a profile");
+    public UserProfile findMine(ClerkIdentity who) {
+        return requireMine(userService.current(who));
+    }
+
+    @Transactional
+    public UserProfile create(ClerkIdentity who, String email, String nickname, String s3Url) {
+        User user = userService.current(who);
+        if (profileRepository.existsByUserId(user.getId())) {
+            throw new UserProfileConflictException("You already have a profile");
         }
         if (profileRepository.existsByEmail(email)) {
             throw new UserProfileConflictException("Email " + email + " is already in use");
@@ -50,9 +41,9 @@ public class UserProfileService {
 
     /** Full replacement of the editable fields. The owning user never changes. */
     @Transactional
-    public UserProfile update(Long profileId, String email, String nickname, String s3Url) {
-        UserProfile profile = findById(profileId);
-        if (profileRepository.existsByEmailAndIdNot(email, profileId)) {
+    public UserProfile update(ClerkIdentity who, String email, String nickname, String s3Url) {
+        UserProfile profile = requireMine(userService.current(who));
+        if (profileRepository.existsByEmailAndIdNot(email, profile.getId())) {
             throw new UserProfileConflictException("Email " + email + " is already in use");
         }
 
@@ -64,11 +55,13 @@ public class UserProfileService {
     }
 
     @Transactional
-    public void delete(Long profileId) {
-        if (!profileRepository.existsById(profileId)) {
-            throw new UserProfileNotFoundException(profileId);
-        }
-        profileRepository.deleteById(profileId);
+    public void delete(ClerkIdentity who) {
+        profileRepository.delete(requireMine(userService.current(who)));
+    }
+
+    private UserProfile requireMine(User user) {
+        return profileRepository.findByUserId(user.getId())
+                .orElseThrow(UserProfileNotFoundException::new);
     }
 
     private static String blankToNull(String value) {

@@ -1,13 +1,8 @@
 import { useState } from 'react'
 import type { SubmitEvent } from 'react'
 import { useUserProfile } from '../hooks/useUserProfile'
-import type { UpdateUserProfileRequest } from '../types/userProfiles'
+import type { UserProfileRequest } from '../types/userProfiles'
 import Avatar from './Avatar'
-
-interface Props {
-  /** The user whose profile this page shows and edits. */
-  userId: number
-}
 
 interface Draft {
   email: string
@@ -17,19 +12,19 @@ interface Draft {
 
 const EMPTY: Draft = { email: '', nickname: '', s3Url: '' }
 
-function toRequest(draft: Draft): UpdateUserProfileRequest {
+function toRequest(draft: Draft): UserProfileRequest {
   const s3Url = draft.s3Url.trim()
   return { email: draft.email.trim(), nickname: draft.nickname.trim(), s3Url: s3Url || null }
 }
 
 /**
- * One user's profile page. Shows the profile with Edit and Delete, swaps to an
- * inline form while editing, and offers a create form when the user has no
- * profile yet. Server state comes from useUserProfile; the draft and whether
- * the form is open are UI state held here.
+ * The signed-in user's profile page. Shows the profile with Edit and Delete,
+ * swaps to an inline form while editing, and offers a create form when the user
+ * has no profile yet. Server state comes from useUserProfile; the draft and
+ * whether the form is open are UI state held here.
  */
-export default function UserProfile({ userId }: Props) {
-  const { profile, loading, error, create, update, remove } = useUserProfile(userId)
+export default function UserProfile() {
+  const { profile, loading, error, create, update, remove } = useUserProfile()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<Draft>(EMPTY)
 

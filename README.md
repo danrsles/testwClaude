@@ -4,6 +4,7 @@ A small full-stack app for tracking things you want to do, eat, play or visit. E
 
 - **Backend** — Spring Boot 3.5.6 on Java 21, PostgreSQL 18 (hosted on Aiven, or PostGIS in Docker locally), Flyway migrations
 - **Frontend** — React + TypeScript, Vite, React Router, Tailwind CSS v4
+- **Login** — [Clerk](https://clerk.com): it hosts sign-up and sign-in, and the API verifies Clerk's session token on every request
 - **Infrastructure** — the React app on S3 behind CloudFront (HTTPS), the API on one EC2 instance reachable only through CloudFront, all in Terraform; GitHub Actions tests both halves, publishes the API image and deploys the site
 
 ## Prerequisites
@@ -17,19 +18,41 @@ A small full-stack app for tracking things you want to do, eat, play or visit. E
 
 ## Getting started
 
-### 1. Start Docker
+### 1. Create a Clerk application
 
-The backend starts its own local database, so Docker must be running. There are no config files to create for local development.
+Every page and every API route needs a login, so the app does not run without one. At [dashboard.clerk.com](https://dashboard.clerk.com), create an application, choose the sign-in methods you want, then open **Configure → API keys** and copy two values:
 
-### 2. Run the backend
+| Value | Looks like | Used by |
+| --- | --- | --- |
+| Publishable key | `pk_test_...` | the frontend, as `VITE_CLERK_PUBLISHABLE_KEY` |
+| Frontend API URL | `https://<name>.clerk.accounts.dev` | the backend, as `CLERK_ISSUER` |
+
+Neither is secret. The publishable key is compiled into the JavaScript every visitor downloads, and it only tells Clerk's widget which application to use. The **secret key (`sk_...`) is not used anywhere in this project**: the backend checks tokens against Clerk's published public keys, so it never needs it. Don't paste it into any file here.
+
+### 2. Start Docker
+
+The backend starts its own local database, so Docker must be running.
+
+### 3. Run the backend
 
 ```bash
 mvn spring-boot:run     # http://localhost:8080
 ```
 
+The project's Clerk development instance is already set as `app.auth.issuer` in `src/main/resources/application-local.properties`. It isn't secret. If you use your own Clerk application, replace it there or set `CLERK_ISSUER`.
+
+The Frontend API URL is also encoded in the publishable key: everything after `pk_test_` is the hostname in base64, followed by a `$`. If you can't find it in the dashboard, decode the key:
+
+```powershell
+$b64 = 'pk_test_...' -replace '^pk_(test|live)_', ''
+'https://' + [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64.PadRight($b64.Length + (4 - $b64.Length % 4) % 4, '='))).TrimEnd('$')
+```
+
+To check the result, open `<url>/.well-known/jwks.json`, which should list Clerk's public keys.
+
 This uses the default `local` profile. Spring Boot runs `docker compose up` on `compose.yaml`, which starts PostGIS on PostgreSQL 18 (host port **5433**), and connects to it. Flyway creates the schema on first start and seeds a user, `dani`, with two wants. The container keeps running after the app stops. Stop it with `docker compose stop`, or wipe it with `docker compose down -v`.
 
-### 3. Optional: run against the hosted database
+### 4. Optional: run against the hosted database
 
 The deployed backend uses an Aiven PostgreSQL database. To run your local backend against it instead:
 
@@ -50,25 +73,70 @@ The deployed backend uses an Aiven PostgreSQL database. To run your local backen
    mvn spring-boot:run -Dspring-boot.run.profiles=prod
    ```
 
-`config/application-prod.properties` is git-ignored. Keep `app.origin-check.enabled=false` and `app.origin-secret=` in it, as the template does. Requests from the Vite proxy carry no CloudFront header, so that check must be off on a laptop.
+`config/application-prod.properties` is git-ignored. Keep `app.origin-check.enabled=false` and `app.origin-secret=` in it, as the template does. Requests from the Vite proxy carry no CloudFront header, so that check must be off on a laptop. The template also sets `app.auth.issuer` and `app.auth.authorized-parties=http://localhost:5173`, because tokens on a laptop are issued to the Vite dev server rather than to CloudFront.
 
 The free Aiven plan allows only a few connections, and the `prod` profile caps its pool at 7 (`spring.datasource.hikari.maximum-pool-size`). If startup fails with *"remaining connection slots are reserved for roles with the SUPERUSER attribute"*, other clients, usually the deployed API server, are holding them.
 
-### 4. Run the frontend
+### 5. Run the frontend
 
 ```bash
 cd frontend
+cp .env.example .env.local   # then paste the publishable key into it
 npm install
 npm run dev             # http://localhost:5173
 ```
 
+`.env.local` is git-ignored. Without the key the page stays blank, and the console says *"VITE_CLERK_PUBLISHABLE_KEY is not set"*.
+
 The dev server proxies `/api/*` to port 8080, so the browser stays on one origin and the backend needs no CORS configuration.
 
-The app has three screens, linked from the nav at the top: the wants list at `/`, an about page at `/info`, and the user's profile at `/profile`. The header on every screen also shows the user's nickname and picture, linking to the profile. Until S3 uploads exist, a profile without an avatar URL shows a local placeholder picture.
+A signed-out visitor sees only Clerk's sign-in form, which also offers sign-up. Once signed in, the app has three screens, linked from the nav at the top: the wants list at `/`, an about page at `/info`, and your profile at `/profile`. The header shows your nickname and picture, linking to the profile, and Clerk's account menu, which handles account settings and sign-out. Until S3 uploads exist, a profile without an avatar URL shows a local placeholder picture.
+
+## Login
+
+[Clerk](https://clerk.com) owns accounts: sign-up, sign-in, passwords, email verification and social logins all happen in Clerk's widget. This app never sees a password.
+
+```
+Browser ── signs in through Clerk's widget ──► Clerk
+   │  receives a session token: a JWT signed by Clerk, valid ~60 s, refreshed in the background
+   └── every API call: Authorization: Bearer <token> ──► Spring
+          checks the signature against Clerk's public keys (JWKS, fetched once and cached),
+          plus expiry, issuer (CLERK_ISSUER) and azp (CLERK_AUTHORIZED_PARTIES)
+          → the token's "sub" (the Clerk user id) is who you are
+```
+
+- **Users are created on first sign-in.** The first request carrying a new Clerk user's token creates a row in `users` with `clerk_id` set to the token's `sub`. There is no sign-up endpoint in this API, because Clerk's widget does sign-up.
+- **Clerk owns the username, email and last sign-in.** The Clerk session token is customised to carry them, under **Sessions → Customize session token** in the Clerk dashboard:
+
+  ```json
+  {
+    "username": "{{user.username}}",
+    "email": "{{user.primary_email_address}}",
+    "lastLogin": "{{user.last_sign_in_at}}"
+  }
+  ```
+
+  The backend copies them onto the user's row (`users.username`, `users.email`, `users.last_sign_in_at`) whenever they change, so a rename in Clerk's account menu shows up on the next page load.
+  - Without a Clerk username, or without the claim, the username is the Clerk id.
+  - If the name is already taken in our table, for example by the seeded `dani`, the user keeps their current one rather than getting an error.
+  - A missing email or sign-in claim never erases a stored value.
+- **Email stays private.** It sits on `users`, but the API never returns another user's `User`: wants come back as `{id, message, category, userId, username}`, and only `GET /me` shows you your own email. `users.email` is the address to use for notifications.
+- **The owner always comes from the token.** Request bodies no longer carry a `userId`; one sent anyway is ignored. Everyone signed in sees every want, but only a want's owner can change or delete it (`403` otherwise). Profiles are reachable only as `/user/profiles/me`, so nobody can read another user's email.
+- **`azp` is checked.** Clerk records the page origin that requested each token in `azp`. The API accepts only its own origins: `http://localhost:5173` locally, the CloudFront URL in production. That stops a token issued to another site on the same Clerk instance being replayed here.
+- **No cookies, no CSRF.** The API is stateless and reads credentials only from the `Authorization` header, which a cross-site form cannot set, so CSRF protection is off.
+- **The seeded `dani` has no Clerk account.** Their wants show for everyone but can be edited by no one. To claim them, sign in once, then in the database set `dani`'s `clerk_id` to your Clerk user id (shown in the Clerk dashboard, or by `GET /me`) and delete the user row your first sign-in created.
 
 ## API
 
-All bodies are JSON.
+All bodies are JSON. **Every route needs `Authorization: Bearer <Clerk session token>`** and returns `401` without a valid one. The only exception is `GET /actuator/health`, which answers `{"status":"UP"}` when the app and its database are up.
+
+To call the API by hand, sign in to the app, run `await Clerk.session.getToken()` in the browser console, and copy the result. It expires in about a minute.
+
+### Current user
+
+| Method | Path | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `GET` | `/me` | — | `200` your user (`id`, `username`, `clerkId`, `email`, `lastSignInAt`), created on first call | — |
 
 ### Wants
 
@@ -76,41 +144,40 @@ Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/wants` | — | `200` list of wants | `400` unknown `?category=` |
+| `GET` | `/wants` | — | `200` everyone's wants, each `{id, message, category, userId, username}` | `400` unknown `?category=` |
 | `GET` | `/wants?category=FOOD` | — | `200` filtered list | `400` unknown or lowercase value |
-| `POST` | `/wants` | `{message, category, userId}` | `201` created want | `400` invalid body, `404` unknown user |
-| `PUT` | `/wants/{id}` | `{message, category, userId}` | `200` updated want | `400` invalid body, `404` unknown want or user |
-| `DELETE` | `/wants/{id}` | — | `204` no content | `404` unknown want |
+| `POST` | `/wants` | `{message, category}` | `201` created want, owned by you | `400` invalid body |
+| `PUT` | `/wants/{id}` | `{message, category}` | `200` updated want | `400` invalid body, `403` not yours, `404` unknown want |
+| `DELETE` | `/wants/{id}` | — | `204` no content | `403` not yours, `404` unknown want |
 
-Categories are `FOOD`, `MOVIE`, `GAME` and `TRIP`, matched by exact name — `food` is a 400. `PUT` is a full replacement, so every field is required and the owner can be reassigned.
+Categories are `FOOD`, `MOVIE`, `GAME` and `TRIP`, matched by exact name — `food` is a 400. `PUT` is a full replacement of the message and category; the owner never changes.
 
 ```bash
-curl localhost:8080/wants
+TOKEN=...   # see above
+curl -H "Authorization: Bearer $TOKEN" localhost:8080/wants
 
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"message":"Finish Elden Ring","category":"GAME","userId":1}' \
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"message":"Finish Elden Ring","category":"GAME"}' \
   localhost:8080/wants
 ```
 
-### User profiles
+### Your profile
 
-Base path `/user/profiles`. A profile holds a user's `email`, `nickname` and an optional `s3Url` for their avatar. Each user has at most one profile, and an email can belong to only one profile.
+A profile holds your `email`, `nickname` and an optional `s3Url` for your avatar. Each user has at most one profile, and an email can belong to only one profile. You can only ever reach your own profile. There is no list, and no route by id.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/user/profiles` | — | `200` list of profiles | — |
-| `GET` | `/user/profiles?userId=1` | — | `200` list with that user's profile, or empty | — |
-| `GET` | `/user/profiles/{id}` | — | `200` profile | `404` unknown profile |
-| `POST` | `/user/profiles` | `{userId, email, nickname, s3Url?}` | `201` created profile | `400` invalid body, `404` unknown user, `409` user already has a profile or email taken |
-| `PUT` | `/user/profiles/{id}` | `{email, nickname, s3Url?}` | `200` updated profile | `400` invalid body, `404` unknown profile, `409` email taken |
-| `DELETE` | `/user/profiles/{id}` | — | `204` no content | `404` unknown profile |
+| `GET` | `/user/profiles/me` | — | `200` your profile | `404` you have none yet |
+| `POST` | `/user/profiles` | `{email, nickname, s3Url?}` | `201` created profile | `400` invalid body, `409` you already have one, or email taken |
+| `PUT` | `/user/profiles/me` | `{email, nickname, s3Url?}` | `200` updated profile | `400` invalid body, `404` you have none, `409` email taken |
+| `DELETE` | `/user/profiles/me` | — | `204` no content | `404` you have none |
 
-A blank or missing `s3Url` is stored as `null`. `PUT` takes no `userId`, because a profile cannot change owner. Profiles live in their own table rather than on `users`, so email does not appear inside the user object that every want embeds.
+A blank or missing `s3Url` is stored as `null`.
 
 ```bash
-curl localhost:8080/user/profiles?userId=1
-
-curl -X PUT -H 'Content-Type: application/json'   -d '{"email":"dani@example.com","nickname":"Dani","s3Url":null}'   localhost:8080/user/profiles/1
+curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"email":"dani@example.com","nickname":"Dani","s3Url":null}' \
+  localhost:8080/user/profiles/me
 ```
 
 ## Layout
@@ -120,16 +187,20 @@ src/main/java/com/example/demo/
   models/        JPA entities and enums (Want, User, UserProfile, Category)
   repositories/  Spring Data interfaces
   services/      business logic and the exceptions that map to HTTP status
-  controllers/   HTTP endpoints and request records
+  controllers/   HTTP endpoints
+  dto/           request bodies and response shapes (WantRequest, UserProfileRequest, WantResponse)
+  security/      SecurityConfig (who may call what), ClerkJwtConfig (how a token is checked),
+                 AuthorizedPartyValidator (the azp check), OriginSecretFilter (CloudFront only)
 src/main/resources/db/migration/   Flyway migrations
 frontend/src/
-  api/           transport, one function per endpoint, no state
-  hooks/         server state (useWants, useUserProfile)
+  api/           transport, one function per endpoint, no state; http.ts attaches the Clerk token
+  hooks/         server state (useWants, useUserProfile, useCurrentUser)
   types/         shapes mirroring the API
   components/    the screens (Wants.tsx at /, Info.tsx at /info, UserProfile.tsx at /profile),
-                 plus ProfileBadge.tsx in the header and the shared Avatar.tsx
-  currentUser.ts DEFAULT_USER_ID, the user the app acts as until there is a login
-  App.tsx        the shell: nav and routes (BrowserRouter is in main.tsx)
+                 SignInScreen.tsx for signed-out visitors, ProfileBadge.tsx in the header
+                 and the shared Avatar.tsx
+  App.tsx        the shell: the sign-in gate, nav and routes (ClerkProvider and
+                 BrowserRouter are in main.tsx)
 terraform/       single-instance AWS deployment
 ```
 
@@ -143,7 +214,7 @@ mvn test -Dtest=WantControllerTest              # one class
 mvn test -Dtest=WantControllerTest#createsWant  # one method
 ```
 
-Tests are `@WebMvcTest` slices with a mocked service layer, so **they need no database** and pass on a machine with nothing running.
+Tests are `@WebMvcTest` slices with a mocked service layer, so **they need no database** and pass on a machine with nothing running. They `@Import(SecurityConfig.class)` so requests go through the real security rules, and they sign in with Spring Security's `jwt()` request post-processor. The `JwtDecoder` is a mock, so **they never contact Clerk**. `WantServiceTest` covers the ownership rule directly, since the controller tests mock the service away.
 
 Frontend checks:
 
@@ -155,7 +226,7 @@ npm run lint        # oxlint
 npm run build       # production bundle into frontend/dist
 ```
 
-Component tests stub the `api/` module rather than `fetch`, so like the backend tests **they need no server and no database**. They live beside the component as `<Name>.test.tsx`.
+Component tests stub the `api/` module rather than `fetch`, so like the backend tests **they need no server and no database**. They live beside the component as `<Name>.test.tsx`. `App.test.tsx` also stubs `@clerk/react`, replacing `<Show>` with a signed-in/signed-out switch, so no test loads Clerk.
 
 For a design review, ask Claude Code to use the **`ui-ux-reviewer`** agent (for example, "have the ui-ux-reviewer look at the Wants screen"). With the dev server running, it opens the page in Playwright, screenshots it at desktop and mobile widths in light and dark mode, tabs through it by keyboard, and reports visual design, UX and accessibility issues with suggested fixes. It does not change code or data.
 
@@ -173,7 +244,9 @@ To replay migrations from scratch, which destroys all data:
 docker compose down -v && docker compose up -d
 ```
 
-`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays.
+`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token.
+
+If you delete a migration that hasn't run yet and replace it with another of the same version, run `mvn clean` first. Otherwise the old file's compiled copy in `target/classes` stays behind, and Flyway refuses to start with *"Found more than one migration with version"*.
 
 ## Container image
 
@@ -187,9 +260,14 @@ The image contains no credentials. `.dockerignore` keeps `config/` and `.env` ou
 docker run -p 8080:8080 \
   -e DB_URL='jdbc:postgresql://<host>:<port>/defaultdb?sslmode=verify-full&sslrootcert=/certs/ca.pem' \
   -e DB_USER=<user> -e DB_PASSWORD=<password> \
+  -e ORIGIN_SECRET=<secret> \
+  -e CLERK_ISSUER=https://<name>.clerk.accounts.dev \
+  -e CLERK_AUTHORIZED_PARTIES=https://<id>.cloudfront.net \
   -v /path/to/ca.pem:/certs/ca.pem:ro \
   danrsles/wants-api:dev
 ```
+
+`CLERK_AUTHORIZED_PARTIES` is a comma-separated list of the page origins allowed to hold tokens.
 
 The CA certificate is mounted at runtime rather than built into the image, so the same image works against any PostgreSQL database.
 
@@ -217,13 +295,14 @@ It needs two repository **secrets**, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` 
 | `SITE_BUCKET` | `terraform output -raw site_bucket` |
 | `CLOUDFRONT_DISTRIBUTION_ID` | `terraform output -raw cloudfront_distribution_id` |
 | `AWS_DEPLOY_API_ROLE_ARN` | `terraform output -raw github_deploy_api_role_arn` |
+| `CLERK_PUBLISHABLE_KEY` | the Clerk dashboard, **Configure → API keys** (`pk_test_...`) |
 
-Each deploy job shows as skipped until its variable exists: `SITE_BUCKET` for the site, `AWS_DEPLOY_API_ROLE_ARN` for the API.
+Each deploy job shows as skipped until its variable exists: `SITE_BUCKET` for the site, `AWS_DEPLOY_API_ROLE_ARN` for the API. `CLERK_PUBLISHABLE_KEY` is different. Vite compiles it into the bundle, and a site built without it loads to a blank page, so the web build **fails** rather than skips without it. It is a variable rather than a secret because it is public.
 
 **How the API is redeployed.** The `Deploy API` job:
 1. finds the running instance tagged `Name=wants-api`
 2. sends it [`deploy/redeploy-api.sh`](deploy/redeploy-api.sh) through **SSM Run Command**: AWS delivers the command to the SSM agent already running on the server, so there's no SSH, no open port and no key in GitHub
-3. the script runs `docker compose pull` and `up -d`, then polls the API on the server itself with the CloudFront header until it answers
+3. the script runs `docker compose pull` and `up -d`, then polls `/actuator/health` on the server itself, with the CloudFront header, until it answers. That is the one route that needs no Clerk login.
 4. the job waits for the result and fails if the API isn't healthy within two minutes
 
 Requests during the restart get a brief 502 from CloudFront. There is no automatic rollback, because `latest` has already moved; to roll back, re-run the workflow for an earlier commit. Only one API deploy runs at a time.
@@ -250,7 +329,7 @@ Approximate cost: the API server is ~$13 a month (instance, Elastic IP, disk). S
 **Before the first apply**
 
 1. Download Aiven's CA certificate into `terraform/ca.pem`. It is git-ignored, and `db_ca_cert_path` can point elsewhere.
-2. Fill in `terraform.tfvars` from the template. `db_url` must end in `sslrootcert=/certs/ca.pem`, which is the path *inside the container*, not on your machine. Every value needs double quotes.
+2. Fill in `terraform.tfvars` from the template. `db_url` must end in `sslrootcert=/certs/ca.pem`, which is the path *inside the container*, not on your machine. `clerk_issuer` defaults to the project's Clerk instance in `variables.tf`, so set it only to use a different one. Every value needs double quotes.
 3. Put the database password in your shell, **not** in `terraform.tfvars`. Each `plan` and `apply` needs it:
 
    ```bash
@@ -278,7 +357,7 @@ Allow two to three minutes after `apply` before the API answers. A new CloudFron
 
 What the instance gets at boot (`user_data.sh.tftpl`):
 - `/opt/wants/ca.pem`, the certificate, sent in the user data. It isn't secret.
-- `/opt/wants/.env`, holding `DB_URL` and `DB_USER`, plus `DB_PASSWORD` and `ORIGIN_SECRET` fetched from SSM.
+- `/opt/wants/.env`, holding `DB_URL`, `DB_USER`, `CLERK_ISSUER` and `CLERK_AUTHORIZED_PARTIES` (the distribution's `https://<id>.cloudfront.net`), plus `DB_PASSWORD` and `ORIGIN_SECRET` fetched from SSM.
 - `/opt/wants/compose.yaml`, which runs the image with `ca.pem` mounted read-only at `/certs/ca.pem`.
 
 **The origin secret** is generated by Terraform (`random_password`) and stored in SSM as `/wants/origin-secret`. CloudFront sends it as the `X-Origin-Secret` header, and Spring's `OriginSecretFilter` returns 403 without it. The check is switched on by `app.origin-check.enabled=true` in the `prod` profile, and it fails closed: with the switch on, a missing or empty secret stops the app from starting rather than leaving the API open. It exists because CloudFront's address ranges are shared by every CloudFront customer, so the firewall alone would also admit someone else's distribution pointed at this server. Unlike the database password it *is* in `terraform.tfstate`, because it's also part of the distribution's configuration. To rotate it, run `terraform apply -replace=random_password.origin_secret`.
@@ -299,11 +378,13 @@ cd /opt/wants && sudo docker compose logs -f app   # the app's logs
 
 These are deliberate omissions, not oversights:
 
-- **No authentication.** Anyone who can open the site can read and write every want through it. The API server itself admits only CloudFront.
-- **No user accounts.** Profiles can be managed through `/user/profiles`, but users themselves can't be created through the API. `dani` exists only because a migration seeds them, and the frontend acts as `userId: 1` (`DEFAULT_USER_ID` in `frontend/src/currentUser.ts`).
+- **Clerk runs as a development instance.** A Clerk production instance requires a domain you own, with DNS records Clerk can verify, and the site is still on `*.cloudfront.net`. A development instance works there, but shows a "Development mode" badge and has Clerk's development user limits. Moving to production means a custom domain, an ACM certificate in us-east-1, a production Clerk instance, and new `pk_live_` / issuer values.
+- **Usernames are optional in Clerk.** Unless usernames are required under **Configure → User & authentication**, a user who signs up with Google alone has none, and shows as their Clerk id (`user_2abc...`) until they set one in the account menu.
+- **No roles.** Every signed-in user has the same rights; there is no admin who can moderate other people's wants.
 - **No avatar uploads.** `s3Url` is a plain URL field until S3 is set up.
 - **The header badge does not refresh on edit.** The badge and the profile page each fetch the profile, so a nickname changed on `/profile` reaches the header on the next page load. A shared server cache such as TanStack Query would fix this.
-- **No DTO layer.** Entities serialize straight to JSON, so `GET /wants` embeds the full user object. A field that should not be exposed would need a DTO.
+- **Only wants have a response type.** `GET /wants` returns `WantResponse`, which names the owner only by `userId` and `username`. Profiles and `/me` still return the entities, which is fine only because they return the caller's own data. Any future endpoint listing other users needs its own response type.
+- **Two emails per user.** Clerk's verified email lands on `users.email`, while the profile has its own, user-typed `email`. For notifications use `users.email`. The profile field could later be prefilled from it, or dropped.
 - **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext, including the CloudFront origin secret. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed
@@ -316,3 +397,5 @@ Each is git-ignored. `config/application-prod.properties` contains the live data
 | `terraform/terraform.tfvars` | the database URL and user, your IP |
 | `terraform/terraform.tfstate` | the deployed infrastructure's details, in cleartext |
 | `terraform/tfplan` | a zip archive embedding every variable value |
+
+The Clerk **secret key** (`sk_...`) should never be in this repository at all, ignored or not. Nothing here uses it.

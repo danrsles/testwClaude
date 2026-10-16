@@ -3,23 +3,26 @@ package com.example.demo.services;
 import java.util.List;
 
 import com.example.demo.models.Category;
-import com.example.demo.models.User;
 import com.example.demo.models.Want;
-import com.example.demo.repositories.UserRepository;
 import com.example.demo.repositories.WantRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * Every signed-in user sees every want, but only its owner may change or
+ * delete it. The owner is always the signed-in user, identified by the Clerk
+ * id from the token, never an id sent in the request.
+ */
 @Service
 public class WantService {
 
     private final WantRepository wantRepository;
-    private final UserRepository userRepository;
+    private final UserService userService;
 
-    public WantService(WantRepository wantRepository, UserRepository userRepository) {
+    public WantService(WantRepository wantRepository, UserService userService) {
         this.wantRepository = wantRepository;
-        this.userRepository = userRepository;
+        this.userService = userService;
     }
 
     public List<Want> findAll() {
@@ -30,36 +33,34 @@ public class WantService {
         return wantRepository.findByCategory(category);
     }
 
-    public Want create(String message, Category category, Long userId) {
-        return wantRepository.save(new Want(message, category, requireUser(userId)));
+    @Transactional
+    public Want create(String message, Category category, ClerkIdentity who) {
+        return wantRepository.save(new Want(message, category, userService.current(who)));
     }
 
-    /**
-     * Full replacement: every field is overwritten, including the owner.
-     * Transactional so the load and the write share one unit of work.
-     */
+    /** Replaces the message and category. The owner never changes. */
     @Transactional
-    public Want update(Long wantId, String message, Category category, Long userId) {
-        Want want = wantRepository.findById(wantId)
-                .orElseThrow(() -> new WantNotFoundException(wantId));
+    public Want update(Long wantId, String message, Category category, ClerkIdentity who) {
+        Want want = requireOwned(wantId, who.clerkId());
 
         want.setMessage(message);
         want.setCategory(category);
-        want.setUser(requireUser(userId));
 
         return wantRepository.save(want);
     }
 
     @Transactional
-    public void delete(Long wantId) {
-        if (!wantRepository.existsById(wantId)) {
-            throw new WantNotFoundException(wantId);
-        }
-        wantRepository.deleteById(wantId);
+    public void delete(Long wantId, ClerkIdentity who) {
+        wantRepository.delete(requireOwned(wantId, who.clerkId()));
     }
 
-    private User requireUser(Long userId) {
-        return userRepository.findById(userId)
-                .orElseThrow(() -> new UserNotFoundException(userId));
+    /** 404 if the want does not exist, 403 if it belongs to someone else. */
+    private Want requireOwned(Long wantId, String clerkId) {
+        Want want = wantRepository.findById(wantId)
+                .orElseThrow(() -> new WantNotFoundException(wantId));
+        if (!clerkId.equals(want.getUser().getClerkId())) {
+            throw new WantForbiddenException(wantId);
+        }
+        return want;
     }
 }

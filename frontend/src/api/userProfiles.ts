@@ -1,20 +1,19 @@
-import type {
-  CreateUserProfileRequest,
-  UpdateUserProfileRequest,
-  UserProfile,
-} from '../types/userProfiles'
-import { fail } from './http'
+import type { UserProfile, UserProfileRequest } from '../types/userProfiles'
+import { authFetch, fail } from './http'
 
+// Only ever the signed-in user's own profile; the API offers no other.
 const BASE = '/api/user/profiles'
+const MINE = `${BASE}/me`
 
-export async function listUserProfiles(userId?: number): Promise<UserProfile[]> {
-  const url = userId === undefined ? BASE : `${BASE}?userId=${userId}`
-  const response = await fetch(url)
+/** Null when the signed-in user has not created a profile yet. */
+export async function getMyProfile(): Promise<UserProfile | null> {
+  const response = await authFetch(MINE)
+  if (response.status === 404) return null
   return response.ok ? response.json() : fail(response)
 }
 
-export async function createUserProfile(body: CreateUserProfileRequest): Promise<UserProfile> {
-  const response = await fetch(BASE, {
+export async function createMyProfile(body: UserProfileRequest): Promise<UserProfile> {
+  const response = await authFetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -22,11 +21,8 @@ export async function createUserProfile(body: CreateUserProfileRequest): Promise
   return response.ok ? response.json() : fail(response)
 }
 
-export async function updateUserProfile(
-  id: number,
-  body: UpdateUserProfileRequest,
-): Promise<UserProfile> {
-  const response = await fetch(`${BASE}/${id}`, {
+export async function updateMyProfile(body: UserProfileRequest): Promise<UserProfile> {
+  const response = await authFetch(MINE, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -34,7 +30,7 @@ export async function updateUserProfile(
   return response.ok ? response.json() : fail(response)
 }
 
-export async function deleteUserProfile(id: number): Promise<void> {
-  const response = await fetch(`${BASE}/${id}`, { method: 'DELETE' })
+export async function deleteMyProfile(): Promise<void> {
+  const response = await authFetch(MINE, { method: 'DELETE' })
   if (!response.ok) await fail(response)
 }

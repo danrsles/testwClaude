@@ -19,6 +19,8 @@ docker compose up -d app
 
 # The API rejects requests without CloudFront's header, so the health check
 # sends it too. .env is written in shell syntax by the boot script.
+# /actuator/health is the one path that needs no Clerk login; it answers 200
+# only when the app is up and its database reachable.
 set -a
 # shellcheck disable=SC1091
 . ./.env
@@ -26,7 +28,7 @@ set +a
 
 for attempt in $(seq 1 40); do
   if curl -fsS -o /dev/null --max-time 5 \
-      -H "X-Origin-Secret: ${ORIGIN_SECRET}" http://localhost:8080/wants; then
+      -H "X-Origin-Secret: ${ORIGIN_SECRET}" http://localhost:8080/actuator/health; then
     echo "API healthy after ${attempt} check(s), running image $(docker inspect --format '{{.Image}}' "$(docker compose ps -q app)")"
     # Old images are no longer needed; keeps the 20 GB disk from filling up.
     docker image prune -f > /dev/null

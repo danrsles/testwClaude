@@ -190,6 +190,11 @@ resource "aws_instance" "app" {
     db_password_parameter   = aws_ssm_parameter.db_password.name
     origin_secret_parameter = aws_ssm_parameter.origin_secret.name
     db_ca_cert              = trimspace(file("${path.module}/${var.db_ca_cert_path}"))
+    clerk_issuer            = var.clerk_issuer
+    # Clerk puts the requesting page's origin in each token's azp claim. The
+    # distribution depends only on the Elastic IP, not this instance, so there
+    # is no cycle.
+    clerk_authorized_parties = "https://${aws_cloudfront_distribution.site.domain_name}"
   })
 
   # Replace the instance when the bootstrap script changes, so the running
