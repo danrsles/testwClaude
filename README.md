@@ -157,7 +157,7 @@ Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/wants` | — | `200` everyone's wants, each `{id, message, category, userId, username, nickname}` | `400` unknown `?category=` |
+| `GET` | `/wants` | — | `200` everyone's wants, each `{id, message, category, userId, username}` | `400` unknown `?category=` |
 | `GET` | `/wants?category=FOOD` | — | `200` filtered list | `400` unknown or lowercase value |
 | `POST` | `/wants` | `{message, category}` | `201` created want, owned by you | `400` invalid body |
 | `PUT` | `/wants/{id}` | `{message, category}` | `200` updated want | `400` invalid body, `403` not yours, `404` unknown want |
@@ -376,7 +376,7 @@ These are deliberate omissions, not oversights:
 - **Usernames are optional in Clerk.** Unless usernames are required under **Configure → User & authentication**, a user who signs up with Google alone has none, and shows as their Clerk id (`user_2abc...`) until they set one in the account menu.
 - **No roles.** Every signed-in user has the same rights; there is no admin who can moderate other people's wants.
 - **No avatar uploads.** `s3Url` is a plain URL field until S3 is set up.
-- **Only wants have a response type.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `nickname`. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users needs its own response type.
+- **Only wants have a response type.** `GET /wants` returns `WantResponse`, which names the owner only by `userId` and `username`. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users needs its own response type.
 - **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext, including the CloudFront origin secret. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed

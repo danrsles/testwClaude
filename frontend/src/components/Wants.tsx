@@ -137,7 +137,7 @@ export default function Wants() {
               )}
 
               <span className="text-sm text-stone-500 dark:text-stone-400">
-                {want.nickname ?? want.username}
+                {want.username}
               </span>
 
               <span className="ml-auto flex gap-1.5">

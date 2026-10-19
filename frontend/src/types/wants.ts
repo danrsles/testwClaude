@@ -29,7 +29,7 @@ export interface UpdateMeRequest {
 
 /**
  * Everyone's wants are visible to every signed-in user, so the owner comes as
- * public fields only, never a whole User.
+ * just an id and a username, never a whole User.
  */
 export interface Want {
   id: number
@@ -37,8 +37,6 @@ export interface Want {
   category: Category
   userId: number
   username: string
-  /** The owner's nickname; null if they have not set one. */
-  nickname: string | null
 }
 
 /** The owner is whoever is signed in, so there is no userId. */

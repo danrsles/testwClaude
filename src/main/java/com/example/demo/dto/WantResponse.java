@@ -5,14 +5,11 @@ import com.example.demo.models.Want;
 
 /**
  * A want as the API returns it. Every signed-in user sees every want, so this
- * names its owner by public fields only (id, username, nickname) and never
- * embeds the User entity, which holds that user's email. A new field reaches
- * the wants list only by being added here on purpose.
- *
- * @param nickname the owner's nickname, or null if they have not set one
+ * names its owner by userId and username only, and never embeds the User
+ * entity, which holds that user's email. A new field reaches the wants list
+ * only by being added here on purpose.
  */
-public record WantResponse(Long id, String message, Category category, Long userId, String username,
-        String nickname) {
+public record WantResponse(Long id, String message, Category category, Long userId, String username) {
 
     public static WantResponse from(Want want) {
         return new WantResponse(
@@ -20,7 +17,6 @@ public record WantResponse(Long id, String message, Category category, Long user
                 want.getMessage(),
                 want.getCategory(),
                 want.getUser().getId(),
-                want.getUser().getUsername(),
-                want.getUser().getNickname());
+                want.getUser().getUsername());
     }
 }

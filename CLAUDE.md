@@ -77,7 +77,7 @@ Which user the app acts as comes from the token, so no component passes a user i
 - `useMe()` throws outside the provider, so a component test that renders one of them wraps it in `<MeProvider>`.
 - `useMe.ts` holds the context and hook, and `MeProvider.tsx` the component. They are split because oxlint wants component files to export components only.
 
-`Wants.tsx` shows edit controls only on rows where `want.userId` matches `me.id`, but that is cosmetic: the API returns 403 regardless. It names each owner by `want.nickname`, falling back to `want.username`.
+`Wants.tsx` shows edit controls only on rows where `want.userId` matches `me.id`, but that is cosmetic: the API returns 403 regardless. It names each owner by `want.username`; nicknames appear only in the header and on the profile page.
 
 If more state needs sharing, reach for TanStack Query rather than more providers.
 
@@ -145,7 +145,7 @@ Endpoints:
 - User-edited fields: `nickname`, `s3_url`, both nullable. A new user simply has neither, so there is no "create profile" step.
 
 **`User` holds private data**, so it is serialized **only for its own user**, by `GET /me` and `PUT /me`. **Never return a `User`, or an entity that embeds one, for another user.**
-- Wants are returned as `WantResponse` (`id`, `message`, `category`, `userId`, `username`, `nickname`).
+- Wants are returned as `WantResponse` (`id`, `message`, `category`, `userId`, `username`).
 - `WantControllerTest.neverExposesTheOwnersPrivateDetails` guards that.
 - Any new endpoint that lists other people's data needs its own response record copying only public fields.
 

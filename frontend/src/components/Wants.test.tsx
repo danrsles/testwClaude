@@ -23,7 +23,7 @@ const DANI: User = { id: 1, username: 'dani', clerkId: 'user_dani', email: null,
 const SAM: User = { id: 2, username: 'sam', clerkId: 'user_sam', email: null, lastSignInAt: null, nickname: 'Sammy', s3Url: null }
 
 function want(id: number, message: string, category: Category = 'FOOD', owner = DANI): Want {
-  return { id, message, category, userId: owner.id, username: owner.username, nickname: owner.nickname }
+  return { id, message, category, userId: owner.id, username: owner.username }
 }
 
 // Wants reads the signed-in user from useMe, so it renders inside the provider.
@@ -128,15 +128,14 @@ describe('Wants', () => {
     expect(screen.getAllByLabelText('Change category')).toHaveLength(1)
   })
 
-  it("names each owner by nickname, or by username when they haven't set one", async () => {
+  it('names each owner by username', async () => {
     vi.mocked(listWants).mockResolvedValue([
       want(1, 'Ramen downtown'),
       want(2, 'Dune Part Two', 'MOVIE', SAM),
     ])
     renderWants()
 
-    expect(await screen.findByText('Sammy')).toBeInTheDocument()
+    expect(await screen.findByText('sam')).toBeInTheDocument()
     expect(screen.getByText('dani')).toBeInTheDocument()
-    expect(screen.queryByText('sam')).not.toBeInTheDocument()
   })
 })

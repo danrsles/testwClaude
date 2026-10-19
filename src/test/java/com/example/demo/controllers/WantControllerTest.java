@@ -88,8 +88,7 @@ class WantControllerTest {
                 .andExpect(jsonPath("$[0].message").value("Ramen downtown"))
                 .andExpect(jsonPath("$[0].category").value("FOOD"))
                 .andExpect(jsonPath("$[0].userId").value(1))
-                .andExpect(jsonPath("$[0].username").value("dani"))
-                .andExpect(jsonPath("$[0].nickname").value("Dani"));
+                .andExpect(jsonPath("$[0].username").value("dani"));
     }
 
     @Test
@@ -104,6 +103,7 @@ class WantControllerTest {
                 .andExpect(jsonPath("$[0].email").doesNotExist())
                 .andExpect(jsonPath("$[0].lastSignInAt").doesNotExist())
                 .andExpect(jsonPath("$[0].clerkId").doesNotExist())
+                .andExpect(jsonPath("$[0].nickname").doesNotExist())
                 .andExpect(content().string(not(containsString("dani@example.com"))));
     }
 
