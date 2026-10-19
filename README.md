@@ -174,15 +174,16 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
 
 ### Follows
 
-Your wants list shows your own wants and those of everyone you follow. There is no follow button or user search in the app yet, so you follow people through the API. Base path `/follows`; the follower is always you, from the token.
+Your wants list shows your own wants and those of everyone you follow. In the app, the **People** screen (`/people`) lists who you follow, and searching it by username finds anyone else, each with a Follow or Unfollow button. Underneath it are these routes. Base path `/follows`; the follower is always you, from the token.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
 | `GET` | `/follows` | — | `200` who you follow, each `{id, username, imageUrl}` | — |
 | `PUT` | `/follows/{userId}` | — | `204`; following again changes nothing | `400` yourself, `404` unknown user |
 | `DELETE` | `/follows/{userId}` | — | `204`, whether or not you were following | — |
+| `GET` | `/users?q=al` | — | `200` up to 20 users whose username contains `q`, ignoring case, never you, each `{id, username, imageUrl, following}`; an empty `q` finds no one | — |
 
-`V10__seed_test_users.sql` adds three test users, `alex`, `sam` and `jordan`, with two wants each. To try it, look up their ids, then follow one:
+`V10__seed_test_users.sql` adds three test users, `alex`, `sam` and `jordan`, with two wants each. To try it, search for one on the People screen and press Follow. Or, through the API, look up their ids, then follow one:
 
 ```bash
 docker exec demo-postgres psql -U wants -c "select id, username from users"
@@ -397,8 +398,7 @@ These are deliberate omissions, not oversights:
 - **Usernames are optional in Clerk.** Unless usernames are required under **Configure → User & authentication**, a user who signs up with Google alone has none, and shows as their Clerk id (`user_2abc...`) until they set one in the account menu.
 - **No roles.** Every signed-in user has the same rights; there is no admin who can moderate other people's wants.
 - **Pictures live in Clerk.** The app stores only each picture's URL, so moving off Clerk would mean moving everyone's picture too. Other people see a changed picture the next time they load the list; nothing in the app updates live.
-- **No way to find people yet.** Follows are made through the API by user id; the app has no search and no follow button.
-- **Other users go out as response types only.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `imageUrl`, and `GET /follows` returns `UserSummary`, with the same three fields. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users should return `UserSummary` or its own response type.
+- **Other users go out as response types only.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `imageUrl`, `GET /follows` returns `UserSummary`, with the same three fields, and `GET /users?q=` returns `PersonResult`, which adds only whether you follow them. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users should return `UserSummary` or its own response type.
 - **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext, including the CloudFront origin secret. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed

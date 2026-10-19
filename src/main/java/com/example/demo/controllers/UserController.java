@@ -12,7 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * The signed-in user, as Clerk describes them. Returns the entity,
  * private fields included, which is safe only because it is always the
- * caller's own row. There is no route to anyone else's user.
+ * caller's own row. There is no route to anyone else's user; others appear
+ * only as public search results (PeopleController).
  */
 @RestController
 @RequestMapping("/me")

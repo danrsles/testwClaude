@@ -1,6 +1,9 @@
 package com.example.demo.services;
 
 import java.util.List;
+import java.util.Set;
+
+import com.example.demo.dto.PersonResult;
 
 import com.example.demo.models.Follow;
 import com.example.demo.models.User;
@@ -53,6 +56,25 @@ public class FollowService {
     public List<User> following(ClerkIdentity who) {
         return followRepository.findByFollowerIdOrderById(userService.current(who).getId()).stream()
                 .map(Follow::getFollowee)
+                .toList();
+    }
+
+    /**
+     * Up to 20 users whose name contains the text, ignoring case, each marked
+     * with whether you follow them. Never includes you. A blank search finds
+     * no one rather than listing everybody.
+     */
+    @Transactional
+    public List<PersonResult> search(String text, ClerkIdentity who) {
+        User me = userService.current(who);
+        String wanted = text == null ? "" : text.strip();
+        if (wanted.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> followed = followRepository.findFolloweeIds(me.getId());
+        return userRepository.findTop20ByUsernameContainingIgnoreCaseAndIdNotOrderByUsername(wanted, me.getId())
+                .stream()
+                .map(user -> PersonResult.from(user, followed.contains(user.getId())))
                 .toList();
     }
 }
