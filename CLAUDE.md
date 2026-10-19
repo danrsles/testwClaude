@@ -51,16 +51,14 @@ The dev server proxies `/api/*` to `http://localhost:8080`, stripping the prefix
 ```
 src/api/http.ts                 `fail`, plus `authFetch`, which attaches the Clerk session token
 src/api/wants.ts                transport: one function per endpoint, no state
-src/api/userProfiles.ts         the same for /user/profiles/me
-src/api/me.ts                   the same for /me
+src/api/me.ts                   the same for /me (GET and PUT)
 src/hooks/useWants.ts           server state: the cached list and its mutations
-src/hooks/useUserProfile.ts     server state: the signed-in user's profile (or null) and its mutations
-src/hooks/useCurrentUser.ts     the signed-in user's database record, for telling own wants apart
+src/hooks/MeProvider.tsx        server state: the signed-in user, loaded once and shared
+src/hooks/useMe.ts              the context MeProvider fills, and the hook that reads it
 src/types/wants.ts              the shapes the API returns and accepts
-src/types/userProfiles.ts       the same for profiles
 src/components/Wants.tsx        the whole wants screen, including its own UI state
 src/components/Info.tsx         a static about page, routed at /info
-src/components/UserProfile.tsx  the profile page at /profile: view, edit, delete, or create
+src/components/UserProfile.tsx  the profile page at /profile: view, and edit nickname and avatar
 src/components/ProfileBadge.tsx nickname and avatar in the header, linking to /profile
 src/components/Avatar.tsx       round picture with a local placeholder fallback
 src/components/SignInScreen.tsx Clerk's <SignIn>, shown instead of the app when signed out
@@ -73,7 +71,15 @@ Routing is React Router (`react-router`, declarative mode). `main.tsx` wraps `Ap
 
 **Login is Clerk** (`@clerk/react` v6, Clerk Core 3; the old `@clerk/clerk-react` is deprecated). Core 3 replaced `<SignedIn>`/`<SignedOut>` with `<Show when="signed-in">`/`<Show when="signed-out">`, which `App.tsx` uses to gate the whole shell, so nothing fetches before there is a session. `api/http.ts` gets the token from Clerk's standalone `getToken()` export, which works outside React, so the transport needs no hook and the layering rule holds. `main.tsx` throws if `VITE_CLERK_PUBLISHABLE_KEY` is unset (`frontend/.env.local`, git-ignored by `*.local`; template in `.env.example`). The publishable key is public by design; **the Clerk secret key is used nowhere and must never be added**.
 
-Which user the app acts as comes from the token, so no component passes a user id. `Wants.tsx` shows edit controls only on rows where `want.user.id` matches `useCurrentUser()`, but that is cosmetic: the API returns 403 regardless. The badge and the profile page each call `useUserProfile`, so they hold separate copies. A nickname changed on `/profile` reaches the header only on the next load. That is the point to reach for TanStack Query.
+Which user the app acts as comes from the token, so no component passes a user id. The signed-in user is the one piece of state shared across screens:
+- `App.tsx` wraps the signed-in shell in **`MeProvider`**, which makes a single `GET /me` and exposes it through React context.
+- `ProfileBadge`, `Wants` and `UserProfile` all read it with `useMe()`, so they share one copy. A nickname saved on `/profile` (`PUT /me`, whose response replaces the copy) shows in the header immediately.
+- `useMe()` throws outside the provider, so a component test that renders one of them wraps it in `<MeProvider>`.
+- `useMe.ts` holds the context and hook, and `MeProvider.tsx` the component. They are split because oxlint wants component files to export components only.
+
+`Wants.tsx` shows edit controls only on rows where `want.userId` matches `me.id`, but that is cosmetic: the API returns 403 regardless. It names each owner by `want.nickname`, falling back to `want.username`.
+
+If more state needs sharing, reach for TanStack Query rather than more providers.
 
 Avatars use `Avatar.tsx`, which shows `src/assets/avatar-placeholder.svg` when `s3Url` is null and also when the URL fails to load. Vite inlines that SVG as a `data:` URI, so tests compare `src` against the imported asset rather than matching a file name.
 
@@ -96,11 +102,11 @@ State is local `useState`. All server data is refetched after each mutation, whi
 
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
 
-- `models` — JPA entities and enums (`Want`, `User`, `UserProfile`, `Category`)
-- `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`, `UserProfileRepository`)
-- `services` — business logic, the only layer controllers talk to (`WantService`, `UserProfileService`)
-- `controllers` — HTTP endpoints (`WantController`, `UserProfileController`, `UserController`), plus `Identities`, which turns a token into a `ClerkIdentity`
-- `dto` — request bodies with their Bean Validation constraints (`WantRequest`, `UserProfileRequest`) and response shapes (`WantResponse`). New request and response records go here, not in `controllers`.
+- `models` — JPA entities and enums (`Want`, `User`, `Category`)
+- `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`)
+- `services` — business logic, the only layer controllers talk to (`WantService`, `UserService`), plus `ClerkIdentity`
+- `controllers` — HTTP endpoints (`WantController`, `UserController`), plus `Identities`, which turns a token into a `ClerkIdentity`
+- `dto` — request bodies with their Bean Validation constraints (`WantRequest`, `UpdateMeRequest`) and response shapes (`WantResponse`). New request and response records go here, not in `controllers`.
 - `security` — `SecurityConfig` (the filter chain), `ClerkJwtConfig` (the `JwtDecoder`), `AuthorizedPartyValidator` (the `azp` check) and `OriginSecretFilter`, which rejects requests that did not come through CloudFront
 
 **Authentication.** Every route needs a Clerk session token in `Authorization: Bearer`, except `/actuator/health` and `/error`. Spring Security runs as an OAuth2 resource server. It is stateless, and CSRF is off, because nothing reads cookies.
@@ -128,21 +134,26 @@ Controllers depend on services, never on repositories directly, and all dependen
 
 Endpoints:
 
-- `GET /me` — the signed-in user, created on first call.
+- `GET /me` — the signed-in user, account and profile in one (`id`, `username`, `clerkId`, `email`, `lastSignInAt`, `nickname`, `s3Url`), created on first call.
 - `GET /wants` — every want, from every user, as `WantResponse` (`{id, message, category, userId, username}`), narrowed by an optional `?category=` parameter. Spring converts that parameter to the `Category` enum by exact name, so `FOOD` works while `food` or an unknown value yields 400 before the controller runs.
 - `POST /wants`, `PUT /wants/{id}`, `DELETE /wants/{id}` — `WantRequest` is `{"message", "category"}` with Bean Validation constraints, so a blank message or unknown category is a 400 before the service is reached. The owner is the token's user, and an unknown property such as a stale `userId` is ignored. Changing someone else's want is a 403 via `WantForbiddenException`, which carries `@ResponseStatus` rather than needing an exception handler.
-- `/user/profiles` — only the signed-in user's own profile: `GET /me` (404 if none), `POST` on the base path, `PUT /me`, `DELETE /me`, all taking `UserProfileRequest` (`email`, `nickname`, optional `s3Url`). **There is deliberately no list and no id-based route**, because profiles hold email addresses. A second profile for a user, or an email already in use, is a **409** via `UserProfileConflictException`. The service checks for these up front, so the client never sees a 500 from the database unique constraints. A blank `s3Url` is stored as null.
+- `PUT /me` — replaces the two fields you edit yourself, taking `UpdateMeRequest` (`nickname` up to 100 characters, `s3Url` up to 1024, both optional). Blank or missing clears a field. There are no `username` or `email` fields: Clerk owns those, so an attempt to send them is ignored. **There is deliberately no route to another user's record.**
 - `GET /actuator/health` — the only unauthenticated route. Actuator exposes nothing else by default, and the health details stay hidden.
 
-`UserProfile` is a separate entity, one-to-one with `User` through a unique `user_id`. The association runs from profile to user only, and it is eager, for the same reasons as `Want.user` below.
+**`User` is the account and the profile in one row.** There used to be a separate `user_profiles` table, kept apart only so email stayed out of every want; V7 folded it in once wants stopped embedding the user.
+- Clerk-owned fields: `username`, `clerk_id`, `email`, `last_sign_in_at`, copied from the token by `UserService`.
+- User-edited fields: `nickname`, `s3_url`, both nullable. A new user simply has neither, so there is no "create profile" step.
 
-**`User` holds private data** (`email` and `last_sign_in_at`, copied from the Clerk token by `UserService`; V6). It is therefore serialized **only for its own user**: from `GET /me`, and inside their own profile. **Never return a `User`, or an entity that embeds one, for another user.** Wants are returned as `WantResponse` (`id`, `message`, `category`, `userId`, `username`), and `WantControllerTest.neverExposesTheOwnersPrivateDetails` guards that. Any new endpoint that lists other people's data needs its own response record copying only public fields.
+**`User` holds private data**, so it is serialized **only for its own user**, by `GET /me` and `PUT /me`. **Never return a `User`, or an entity that embeds one, for another user.**
+- Wants are returned as `WantResponse` (`id`, `message`, `category`, `userId`, `username`, `nickname`).
+- `WantControllerTest.neverExposesTheOwnersPrivateDetails` guards that.
+- Any new endpoint that lists other people's data needs its own response record copying only public fields.
 
 Each `Want` belongs to a `User` through a non-null `@ManyToOne` (`user_id`, a real foreign key). The association is deliberately unidirectional: a `User` has no `List<Want>`, which avoids the infinite recursion a bidirectional pair would cause during JSON serialization. Query wants by user through the repository rather than navigating from the user.
 
 `@ManyToOne` defaults to eager fetching, and that matters here because `spring.jpa.open-in-view=false` closes the persistence context before serialization — a lazy association would throw `LazyInitializationException` while Jackson writes the response. If this is ever made lazy for performance, the controller's query must fetch-join the user.
 
-Responses are a mix. `WantController` maps every `Want` to `WantResponse` (a record in `dto`, built by `WantResponse.from`). `UserProfile` and `User` are still serialized as entities, which is safe only because those endpoints return the caller's own data. When a field must stay hidden, add a response record rather than annotating the entity with `@JsonIgnore`.
+Responses are a mix. `WantController` maps every `Want` to `WantResponse` (a record in `dto`, built by `WantResponse.from`). `User` is still serialized as an entity by `/me`, which is safe only because it is always the caller's own row. When a field must stay hidden, add a response record rather than annotating the entity with `@JsonIgnore`.
 
 Tests use `@WebMvcTest` with MockMvc, which loads only the web slice — no datasource, so `mvn test` passes without a database running. Collaborators are replaced with `@MockitoBean` (Spring Boot 3.4+ replaced `@MockBean`). New controller tests should follow that pattern and name the controller under test in the annotation. They also need:
 - `@Import(SecurityConfig.class)`. `@WebMvcTest` does not pick up `@Configuration` classes, and without it Boot's default chain would apply, with CSRF on.
@@ -161,7 +172,7 @@ The project moved from MySQL to PostgreSQL once, and V1 and V3 were rewritten in
 
 SQL notes for this schema: ids are `BIGINT GENERATED BY DEFAULT AS IDENTITY`, which `GenerationType.IDENTITY` maps to. Enum-like columns such as `wants.category` are `VARCHAR` with a `CHECK` constraint, not native PostgreSQL enum types — `@Enumerated(EnumType.STRING)` is validated as a character column, and a native enum would fail `ddl-auto=validate`. PostGIS and `btree_gist` are available on the hosted database and in the local image; enable them with `CREATE EXTENSION IF NOT EXISTS` in the migration that first needs them.
 
-`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` is schema and stays.
+`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` created the profiles table that `V7__merge_user_profiles_into_users.sql` later moves onto `users` and drops. V3 and V4 stay, because they have been applied; deleting or editing them would break Flyway's checksums.
 
 Resetting from scratch — the only safe way to replay migrations, and it destroys all data:
 

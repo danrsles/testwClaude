@@ -10,9 +10,10 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 /**
- * A signed-in person. Holds private details (email, last sign-in), so this
- * entity is only ever serialized for its own user: GET /me and their own
- * profile. Anything listing other users' data, like the wants list, goes
+ * A signed-in person: their account (from Clerk) and their profile (nickname
+ * and avatar, which they edit). Holds private details (email, last sign-in),
+ * so this entity is only ever serialized for its own user, by GET /me and
+ * PUT /me. Anything listing other users' data, like the wants list, goes
  * through a response type that copies the public fields (see WantResponse).
  */
 @Entity
@@ -41,6 +42,14 @@ public class User {
     /** When the user last signed in, per Clerk. Copied from the session token. */
     @Column(name = "last_sign_in_at")
     private Instant lastSignInAt;
+
+    /** The name shown to others; null until the user sets one, when the UI falls back to username. */
+    @Column(length = 100)
+    private String nickname;
+
+    /** Avatar location. Null until set; the frontend then shows a placeholder. */
+    @Column(name = "s3_url", length = 1024)
+    private String s3Url;
 
     protected User() {
     }
@@ -84,5 +93,21 @@ public class User {
 
     public void setLastSignInAt(Instant lastSignInAt) {
         this.lastSignInAt = lastSignInAt;
+    }
+
+    public String getNickname() {
+        return nickname;
+    }
+
+    public void setNickname(String nickname) {
+        this.nickname = nickname;
+    }
+
+    public String getS3Url() {
+        return s3Url;
+    }
+
+    public void setS3Url(String s3Url) {
+        this.s3Url = s3Url;
     }
 }

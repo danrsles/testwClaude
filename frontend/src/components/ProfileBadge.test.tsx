@@ -1,20 +1,35 @@
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getMyProfile } from '../api/userProfiles'
+import { getMe } from '../api/me'
+import MeProvider from '../hooks/MeProvider'
+import type { User } from '../types/wants'
 import ProfileBadge from './ProfileBadge'
 
-vi.mock('../api/userProfiles', () => ({
-  getMyProfile: vi.fn(),
-  createMyProfile: vi.fn(),
-  updateMyProfile: vi.fn(),
-  deleteMyProfile: vi.fn(),
+vi.mock('../api/me', () => ({
+  getMe: vi.fn(),
+  updateMe: vi.fn(),
 }))
+
+function me(overrides: Partial<User> = {}): User {
+  return {
+    id: 3,
+    username: 'dani2',
+    clerkId: 'user_dani',
+    email: 'dani@example.com',
+    lastSignInAt: null,
+    nickname: 'Dani',
+    s3Url: 'https://example.com/dani.png',
+    ...overrides,
+  }
+}
 
 function renderBadge() {
   render(
     <MemoryRouter>
-      <ProfileBadge />
+      <MeProvider>
+        <ProfileBadge />
+      </MeProvider>
     </MemoryRouter>,
   )
 }
@@ -25,21 +40,15 @@ describe('ProfileBadge', () => {
   })
 
   it('shows the nickname and links to the profile page', async () => {
-    vi.mocked(getMyProfile).mockResolvedValue({
-      id: 7,
-      user: { id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null },
-      email: 'dani@example.com',
-      nickname: 'Dani',
-      s3Url: 'https://example.com/dani.png',
-    })
+    vi.mocked(getMe).mockResolvedValue(me())
     renderBadge()
 
     const link = await screen.findByRole('link', { name: 'Dani' })
     expect(link).toHaveAttribute('href', '/profile')
   })
 
-  it('invites the user to set up a profile when there is none', async () => {
-    vi.mocked(getMyProfile).mockResolvedValue(null)
+  it('invites the user to set up a profile when there is no nickname', async () => {
+    vi.mocked(getMe).mockResolvedValue(me({ nickname: null }))
     renderBadge()
 
     expect(await screen.findByRole('link', { name: 'Set up profile' })).toHaveAttribute(
@@ -48,11 +57,11 @@ describe('ProfileBadge', () => {
     )
   })
 
-  it('renders nothing when the profile cannot be loaded', async () => {
-    vi.mocked(getMyProfile).mockRejectedValue(new Error('Network down'))
+  it('renders nothing when the user cannot be loaded', async () => {
+    vi.mocked(getMe).mockRejectedValue(new Error('Network down'))
     renderBadge()
 
-    await vi.waitFor(() => expect(getMyProfile).toHaveBeenCalled())
+    await vi.waitFor(() => expect(getMe).toHaveBeenCalled())
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
     expect(screen.queryByText('Network down')).not.toBeInTheDocument()
   })

@@ -28,20 +28,16 @@ vi.mock('./api/wants', () => ({
 }))
 
 vi.mock('./api/me', () => ({
-  getMe: vi.fn().mockResolvedValue({ id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null }),
-}))
-
-vi.mock('./api/userProfiles', () => ({
-  getMyProfile: vi.fn().mockResolvedValue({
-    id: 7,
-    user: { id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null },
+  getMe: vi.fn().mockResolvedValue({
+    id: 1,
+    username: 'dani',
+    clerkId: 'user_dani',
     email: 'dani@example.com',
+    lastSignInAt: null,
     nickname: 'Dani',
     s3Url: null,
   }),
-  createMyProfile: vi.fn(),
-  updateMyProfile: vi.fn(),
-  deleteMyProfile: vi.fn(),
+  updateMe: vi.fn(),
 }))
 
 function renderAt(path: string) {

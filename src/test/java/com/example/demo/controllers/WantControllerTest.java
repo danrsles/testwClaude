@@ -67,6 +67,7 @@ class WantControllerTest {
         User user = new User("dani", DANI_ID);
         ReflectionTestUtils.setField(user, "id", 1L);
         user.setEmail("dani@example.com");
+        user.setNickname("Dani");
         user.setLastSignInAt(Instant.parse("2026-10-16T12:00:00Z"));
         return user;
     }
@@ -87,7 +88,8 @@ class WantControllerTest {
                 .andExpect(jsonPath("$[0].message").value("Ramen downtown"))
                 .andExpect(jsonPath("$[0].category").value("FOOD"))
                 .andExpect(jsonPath("$[0].userId").value(1))
-                .andExpect(jsonPath("$[0].username").value("dani"));
+                .andExpect(jsonPath("$[0].username").value("dani"))
+                .andExpect(jsonPath("$[0].nickname").value("Dani"));
     }
 
     @Test

@@ -90,7 +90,9 @@ npm run dev             # http://localhost:5173
 
 The dev server proxies `/api/*` to port 8080, so the browser stays on one origin and the backend needs no CORS configuration.
 
-A signed-out visitor sees only Clerk's sign-in form, which also offers sign-up. Once signed in, the app has three screens, linked from the nav at the top: the wants list at `/`, an about page at `/info`, and your profile at `/profile`. The header shows your nickname and picture, linking to the profile, and Clerk's account menu, which handles account settings and sign-out. Until S3 uploads exist, a profile without an avatar URL shows a local placeholder picture.
+A signed-out visitor sees only Clerk's sign-in form, which also offers sign-up. Once signed in, the app has three screens, linked from the nav at the top: the wants list at `/`, an about page at `/info`, and your profile at `/profile`. The header shows your nickname and picture, linking to the profile, and Clerk's account menu, which handles account settings and sign-out.
+- **Profile:** set a nickname and an avatar URL. Until you do, others see your username and a placeholder picture.
+- **Username and email:** these come from your Clerk account and change in its account menu.
 
 ## Login
 
@@ -121,7 +123,7 @@ Browser ── signs in through Clerk's widget ──► Clerk
   - If the name is already taken in our table, for example by the seeded `dani`, the user keeps their current one rather than getting an error.
   - A missing email or sign-in claim never erases a stored value.
 - **Email stays private.** It sits on `users`, but the API never returns another user's `User`: wants come back as `{id, message, category, userId, username}`, and only `GET /me` shows you your own email. `users.email` is the address to use for notifications.
-- **The owner always comes from the token.** Request bodies no longer carry a `userId`; one sent anyway is ignored. Everyone signed in sees every want, but only a want's owner can change or delete it (`403` otherwise). Profiles are reachable only as `/user/profiles/me`, so nobody can read another user's email.
+- **The owner always comes from the token.** Request bodies no longer carry a `userId`; one sent anyway is ignored. Everyone signed in sees every want, but only a want's owner can change or delete it (`403` otherwise). Your own record is reachable only as `/me`, and there is no route to anyone else's, so nobody can read another user's email.
 - **`azp` is checked.** Clerk records the page origin that requested each token in `azp`. The API accepts only its own origins: `http://localhost:5173` locally, the CloudFront URL in production. That stops a token issued to another site on the same Clerk instance being replayed here.
 - **No cookies, no CSRF.** The API is stateless and reads credentials only from the `Authorization` header, which a cross-site form cannot set, so CSRF protection is off.
 - **The seeded `dani` has no Clerk account.** Their wants show for everyone but can be edited by no one. To claim them, sign in once, then in the database set `dani`'s `clerk_id` to your Clerk user id (shown in the Clerk dashboard, or by `GET /me`) and delete the user row your first sign-in created.
@@ -132,11 +134,22 @@ All bodies are JSON. **Every route needs `Authorization: Bearer <Clerk session t
 
 To call the API by hand, sign in to the app, run `await Clerk.session.getToken()` in the browser console, and copy the result. It expires in about a minute.
 
-### Current user
+### You: account and profile
+
+Your account and profile live in one record. `username` and `email` come from Clerk, and `nickname` and `s3Url` (your avatar) are yours to set. You can only ever reach your own; there is no route to anyone else's.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/me` | — | `200` your user (`id`, `username`, `clerkId`, `email`, `lastSignInAt`), created on first call | — |
+| `GET` | `/me` | — | `200` you: `id`, `username`, `clerkId`, `email`, `lastSignInAt`, `nickname`, `s3Url`; created on first call | — |
+| `PUT` | `/me` | `{nickname?, s3Url?}` | `200` you, updated | `400` nickname over 100 or URL over 1024 characters |
+
+`PUT /me` is a full replacement of the two fields: a blank or missing one is cleared. Sending `username` or `email` does nothing, because they change in Clerk's account menu.
+
+```bash
+curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"nickname":"Dani","s3Url":null}' \
+  localhost:8080/me
+```
 
 ### Wants
 
@@ -144,7 +157,7 @@ Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/wants` | — | `200` everyone's wants, each `{id, message, category, userId, username}` | `400` unknown `?category=` |
+| `GET` | `/wants` | — | `200` everyone's wants, each `{id, message, category, userId, username, nickname}` | `400` unknown `?category=` |
 | `GET` | `/wants?category=FOOD` | — | `200` filtered list | `400` unknown or lowercase value |
 | `POST` | `/wants` | `{message, category}` | `201` created want, owned by you | `400` invalid body |
 | `PUT` | `/wants/{id}` | `{message, category}` | `200` updated want | `400` invalid body, `403` not yours, `404` unknown want |
@@ -161,40 +174,21 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
   localhost:8080/wants
 ```
 
-### Your profile
-
-A profile holds your `email`, `nickname` and an optional `s3Url` for your avatar. Each user has at most one profile, and an email can belong to only one profile. You can only ever reach your own profile. There is no list, and no route by id.
-
-| Method | Path | Body | Success | Errors |
-| --- | --- | --- | --- | --- |
-| `GET` | `/user/profiles/me` | — | `200` your profile | `404` you have none yet |
-| `POST` | `/user/profiles` | `{email, nickname, s3Url?}` | `201` created profile | `400` invalid body, `409` you already have one, or email taken |
-| `PUT` | `/user/profiles/me` | `{email, nickname, s3Url?}` | `200` updated profile | `400` invalid body, `404` you have none, `409` email taken |
-| `DELETE` | `/user/profiles/me` | — | `204` no content | `404` you have none |
-
-A blank or missing `s3Url` is stored as `null`.
-
-```bash
-curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"email":"dani@example.com","nickname":"Dani","s3Url":null}' \
-  localhost:8080/user/profiles/me
-```
-
 ## Layout
 
 ```
 src/main/java/com/example/demo/
-  models/        JPA entities and enums (Want, User, UserProfile, Category)
+  models/        JPA entities and enums (Want, User, Category)
   repositories/  Spring Data interfaces
   services/      business logic and the exceptions that map to HTTP status
   controllers/   HTTP endpoints
-  dto/           request bodies and response shapes (WantRequest, UserProfileRequest, WantResponse)
+  dto/           request bodies and response shapes (WantRequest, UpdateMeRequest, WantResponse)
   security/      SecurityConfig (who may call what), ClerkJwtConfig (how a token is checked),
                  AuthorizedPartyValidator (the azp check), OriginSecretFilter (CloudFront only)
 src/main/resources/db/migration/   Flyway migrations
 frontend/src/
   api/           transport, one function per endpoint, no state; http.ts attaches the Clerk token
-  hooks/         server state (useWants, useUserProfile, useCurrentUser)
+  hooks/         server state: useWants, and MeProvider/useMe, which load you once and share you
   types/         shapes mirroring the API
   components/    the screens (Wants.tsx at /, Info.tsx at /info, UserProfile.tsx at /profile),
                  SignInScreen.tsx for signed-out visitors, ProfileBadge.tsx in the header
@@ -244,7 +238,7 @@ To replay migrations from scratch, which destroys all data:
 docker compose down -v && docker compose up -d
 ```
 
-`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token.
+`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. V3 and V4 stay even though their table is gone, because applied migrations must never change.
 
 If you delete a migration that hasn't run yet and replace it with another of the same version, run `mvn clean` first. Otherwise the old file's compiled copy in `target/classes` stays behind, and Flyway refuses to start with *"Found more than one migration with version"*.
 
@@ -382,9 +376,7 @@ These are deliberate omissions, not oversights:
 - **Usernames are optional in Clerk.** Unless usernames are required under **Configure → User & authentication**, a user who signs up with Google alone has none, and shows as their Clerk id (`user_2abc...`) until they set one in the account menu.
 - **No roles.** Every signed-in user has the same rights; there is no admin who can moderate other people's wants.
 - **No avatar uploads.** `s3Url` is a plain URL field until S3 is set up.
-- **The header badge does not refresh on edit.** The badge and the profile page each fetch the profile, so a nickname changed on `/profile` reaches the header on the next page load. A shared server cache such as TanStack Query would fix this.
-- **Only wants have a response type.** `GET /wants` returns `WantResponse`, which names the owner only by `userId` and `username`. Profiles and `/me` still return the entities, which is fine only because they return the caller's own data. Any future endpoint listing other users needs its own response type.
-- **Two emails per user.** Clerk's verified email lands on `users.email`, while the profile has its own, user-typed `email`. For notifications use `users.email`. The profile field could later be prefilled from it, or dropped.
+- **Only wants have a response type.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `nickname`. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users needs its own response type.
 - **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext, including the CloudFront origin secret. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed

@@ -106,6 +106,30 @@ class UserServiceTest {
     }
 
     @Test
+    void updatesTheNicknameAndAvatar() {
+        User user = stored(3, "dani2", "user_abc");
+        given(userRepository.findByClerkId("user_abc")).willReturn(Optional.of(user));
+
+        userService.updateMe(new ClerkIdentity("user_abc", "dani2"), "  Dani  ", "https://example.com/d.png");
+
+        assertThat(user.getNickname()).isEqualTo("Dani");
+        assertThat(user.getS3Url()).isEqualTo("https://example.com/d.png");
+    }
+
+    @Test
+    void blankFieldsClearTheNicknameAndAvatar() {
+        User user = stored(3, "dani2", "user_abc");
+        user.setNickname("Dani");
+        user.setS3Url("https://example.com/d.png");
+        given(userRepository.findByClerkId("user_abc")).willReturn(Optional.of(user));
+
+        userService.updateMe(new ClerkIdentity("user_abc", "dani2"), " ", null);
+
+        assertThat(user.getNickname()).isNull();
+        assertThat(user.getS3Url()).isNull();
+    }
+
+    @Test
     void doesNotQueryWhenTheNameIsUnchanged() {
         User user = stored(3, "dani2", "user_abc");
         given(userRepository.findByClerkId("user_abc")).willReturn(Optional.of(user));

@@ -1,6 +1,6 @@
 ﻿import { useState } from 'react'
 import type { SubmitEvent } from 'react'
-import { useCurrentUser } from '../hooks/useCurrentUser'
+import { useMe } from '../hooks/useMe'
 import { useWants } from '../hooks/useWants'
 import { CATEGORIES } from '../types/wants'
 import type { Category, Want } from '../types/wants'
@@ -22,7 +22,7 @@ export default function Wants() {
   const { wants, loading, error, add, update, remove } = useWants(filter)
   // Only the owner may change a want. The API enforces that; this just hides
   // controls that would fail.
-  const me = useCurrentUser()
+  const { me } = useMe()
   const isMine = (want: Want) => me !== null && want.userId === me.id
 
   const [message, setMessage] = useState('')
@@ -137,7 +137,7 @@ export default function Wants() {
               )}
 
               <span className="text-sm text-stone-500 dark:text-stone-400">
-                {want.username}
+                {want.nickname ?? want.username}
               </span>
 
               <span className="ml-auto flex gap-1.5">

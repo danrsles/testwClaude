@@ -37,6 +37,22 @@ public class UserService {
         return user;
     }
 
+    /**
+     * Replaces the fields you edit yourself. Blank means cleared, so the UI
+     * falls back to the username and the placeholder picture.
+     */
+    @Transactional
+    public User updateMe(ClerkIdentity who, String nickname, String s3Url) {
+        User user = current(who);
+        user.setNickname(blankToNull(nickname));
+        user.setS3Url(blankToNull(s3Url));
+        return user;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+
     private User create(ClerkIdentity who) {
         userRepository.insertIfAbsent(who.clerkId(), who.clerkId());
         return userRepository.findByClerkId(who.clerkId()).orElseThrow(() -> new IllegalStateException(
