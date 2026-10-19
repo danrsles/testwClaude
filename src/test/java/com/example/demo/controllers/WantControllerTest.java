@@ -95,7 +95,7 @@ class WantControllerTest {
 
     @Test
     void neverExposesTheOwnersPrivateDetails() throws Exception {
-        // Every signed-in user can list every want, so the owner must appear
+        // Your followers see your wants, so the owner must appear
         // only as userId, username and picture, never as the User entity.
         given(wantService.findAll(DANI)).willReturn(List.of(new Want("Ramen downtown", Category.FOOD, dani)));
 

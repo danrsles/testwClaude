@@ -14,6 +14,7 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,9 +40,14 @@ class WantServiceTest {
     private static final ClerkIdentity DANI = new ClerkIdentity("user_dani", "dani");
     private static final ClerkIdentity MALLORY = new ClerkIdentity("user_mallory", "mallory");
 
-    private final User dani = new User("dani", "user_dani");
+    private final User dani = withId(new User("dani", "user_dani"), 1L);
     // The seeded user from before logins: no Clerk account can match it.
     private final User legacy = new User("legacy");
+
+    private static User withId(User user, Long id) {
+        ReflectionTestUtils.setField(user, "id", id);
+        return user;
+    }
 
     @Test
     void createsWantsForTheSignedInUser() {
@@ -100,25 +106,38 @@ class WantServiceTest {
     }
 
     @Test
+    void listsOnlyTheFeedOfTheSignedInUser() {
+        // Their own wants plus those of the people they follow, never everyone's.
+        List<Want> feed = List.of(new Want("Ramen", Category.FOOD, dani));
+        given(userService.current(DANI)).willReturn(dani);
+        given(wantRepository.findFeed(1L)).willReturn(feed);
+
+        assertThat(wantService.findAll(DANI)).isSameAs(feed);
+        then(wantRepository).should(never()).findAll();
+    }
+
+    @Test
     void bringsTheSignedInUserUpToDateBeforeListing() {
         // So a picture just changed in Clerk is in this response, not only the next one.
-        given(wantRepository.findAll()).willReturn(List.of());
+        given(userService.current(DANI)).willReturn(dani);
+        given(wantRepository.findFeed(1L)).willReturn(List.of());
 
         wantService.findAll(DANI);
 
         InOrder order = inOrder(userService, wantRepository);
         order.verify(userService).current(DANI);
-        order.verify(wantRepository).findAll();
+        order.verify(wantRepository).findFeed(1L);
     }
 
     @Test
     void bringsTheSignedInUserUpToDateBeforeFiltering() {
-        given(wantRepository.findByCategory(Category.FOOD)).willReturn(List.of());
+        given(userService.current(DANI)).willReturn(dani);
+        given(wantRepository.findFeedByCategory(1L, Category.FOOD)).willReturn(List.of());
 
         wantService.findByCategory(Category.FOOD, DANI);
 
         InOrder order = inOrder(userService, wantRepository);
         order.verify(userService).current(DANI);
-        order.verify(wantRepository).findByCategory(Category.FOOD);
+        order.verify(wantRepository).findFeedByCategory(1L, Category.FOOD);
     }
 }

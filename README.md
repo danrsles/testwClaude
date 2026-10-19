@@ -126,10 +126,10 @@ Browser ── signs in through Clerk's widget ──► Clerk
   - If the name is already taken in our table, for example by the seeded `dani`, the user keeps their current one rather than getting an error.
   - A missing email or sign-in claim never erases a stored value.
 - **Email stays private.** It sits on `users`, but the API never returns another user's `User`: wants come back as `{id, message, category, userId, username}`, and only `GET /me` shows you your own email. `users.email` is the address to use for notifications.
-- **The owner always comes from the token.** Request bodies no longer carry a `userId`; one sent anyway is ignored. Everyone signed in sees every want, but only a want's owner can change or delete it (`403` otherwise). Your own record is reachable only as `/me`, and there is no route to anyone else's, so nobody can read another user's email.
+- **The owner always comes from the token.** Request bodies no longer carry a `userId`; one sent anyway is ignored. You see your own wants and those of people you follow, but only a want's owner can change or delete it (`403` otherwise). Your own record is reachable only as `/me`, and there is no route to anyone else's, so nobody can read another user's email.
 - **`azp` is checked.** Clerk records the page origin that requested each token in `azp`. The API accepts only its own origins: `http://localhost:5173` locally, the CloudFront URL in production. That stops a token issued to another site on the same Clerk instance being replayed here.
 - **No cookies, no CSRF.** The API is stateless and reads credentials only from the `Authorization` header, which a cross-site form cannot set, so CSRF protection is off.
-- **The seeded `dani` has no Clerk account.** Their wants show for everyone but can be edited by no one. To claim them, sign in once, then in the database set `dani`'s `clerk_id` to your Clerk user id (shown in the Clerk dashboard, or by `GET /me`) and delete the user row your first sign-in created.
+- **The seeded `dani` has no Clerk account**, nor do the test users `alex`, `sam` and `jordan`. Their wants show only to people who follow them, and can be edited by no one. To claim them, sign in once, then in the database set `dani`'s `clerk_id` to your Clerk user id (shown in the Clerk dashboard, or by `GET /me`) and delete the user row your first sign-in created.
 
 ## API
 
@@ -155,7 +155,7 @@ Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/wants` | — | `200` everyone's wants, each `{id, message, category, userId, username, imageUrl}` | `400` unknown `?category=` |
+| `GET` | `/wants` | — | `200` your wants and those of people you follow, each `{id, message, category, userId, username, imageUrl}` | `400` unknown `?category=` |
 | `GET` | `/wants?category=FOOD` | — | `200` filtered list | `400` unknown or lowercase value |
 | `POST` | `/wants` | `{message, category}` | `201` created want, owned by you | `400` invalid body |
 | `PUT` | `/wants/{id}` | `{message, category}` | `200` updated want | `400` invalid body, `403` not yours, `404` unknown want |
@@ -172,15 +172,38 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
   localhost:8080/wants
 ```
 
+### Follows
+
+Your wants list shows your own wants and those of everyone you follow. There is no follow button or user search in the app yet, so you follow people through the API. Base path `/follows`; the follower is always you, from the token.
+
+| Method | Path | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `GET` | `/follows` | — | `200` who you follow, each `{id, username, imageUrl}` | — |
+| `PUT` | `/follows/{userId}` | — | `204`; following again changes nothing | `400` yourself, `404` unknown user |
+| `DELETE` | `/follows/{userId}` | — | `204`, whether or not you were following | — |
+
+`V10__seed_test_users.sql` adds three test users, `alex`, `sam` and `jordan`, with two wants each. To try it, look up their ids, then follow one:
+
+```bash
+docker exec demo-postgres psql -U wants -c "select id, username from users"
+
+TOKEN=...   # see above
+curl -i -X PUT    -H "Authorization: Bearer $TOKEN" localhost:8080/follows/4
+curl    -H "Authorization: Bearer $TOKEN" localhost:8080/follows
+curl -i -X DELETE -H "Authorization: Bearer $TOKEN" localhost:8080/follows/4
+```
+
+Reload the app after each change to see the list follow along.
+
 ## Layout
 
 ```
 src/main/java/com/example/demo/
-  models/        JPA entities and enums (Want, User, Category)
+  models/        JPA entities and enums (Want, User, Follow, Category)
   repositories/  Spring Data interfaces
   services/      business logic and the exceptions that map to HTTP status
   controllers/   HTTP endpoints
-  dto/           request bodies and response shapes (WantRequest, WantResponse)
+  dto/           request bodies and response shapes (WantRequest, WantResponse, UserSummary)
   security/      SecurityConfig (who may call what), ClerkJwtConfig (how a token is checked),
                  AuthorizedPartyValidator (the azp check), OriginSecretFilter (CloudFront only)
 src/main/resources/db/migration/   Flyway migrations
@@ -206,7 +229,7 @@ mvn test -Dtest=WantControllerTest              # one class
 mvn test -Dtest=WantControllerTest#createsWant  # one method
 ```
 
-Tests are `@WebMvcTest` slices with a mocked service layer, so **they need no database** and pass on a machine with nothing running. They `@Import(SecurityConfig.class)` so requests go through the real security rules, and they sign in with Spring Security's `jwt()` request post-processor. The `JwtDecoder` is a mock, so **they never contact Clerk**. `WantServiceTest` covers the ownership rule directly, since the controller tests mock the service away.
+Tests are `@WebMvcTest` slices with a mocked service layer, so **they need no database** and pass on a machine with nothing running. They `@Import(SecurityConfig.class)` so requests go through the real security rules, and they sign in with Spring Security's `jwt()` request post-processor. The `JwtDecoder` is a mock, so **they never contact Clerk**. `WantServiceTest` covers the ownership rule and the feed, and `FollowServiceTest` who may follow whom, directly, since the controller tests mock the service away.
 
 Frontend checks:
 
@@ -236,7 +259,7 @@ To replay migrations from scratch, which destroys all data:
 docker compose down -v && docker compose up -d
 ```
 
-`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. `V8__clerk_picture_drop_nickname.sql` drops `nickname`, renames `s3_url` to `image_url` and empties it, once the profile page went and the picture became Clerk's. V3 and V4 stay even though their table is gone, because applied migrations must never change.
+`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. `V8__clerk_picture_drop_nickname.sql` drops `nickname`, renames `s3_url` to `image_url` and empties it, once the profile page went and the picture became Clerk's. `V9__create_follows.sql` creates `follows`, one row per follower and followee, unique per pair, never yourself. `V10__seed_test_users.sql` adds the test users `alex`, `sam` and `jordan` with two wants each; like V2, delete it before real use. V3 and V4 stay even though their table is gone, because applied migrations must never change.
 
 If you delete a migration that hasn't run yet and replace it with another of the same version, run `mvn clean` first. Otherwise the old file's compiled copy in `target/classes` stays behind, and Flyway refuses to start with *"Found more than one migration with version"*.
 
@@ -374,7 +397,8 @@ These are deliberate omissions, not oversights:
 - **Usernames are optional in Clerk.** Unless usernames are required under **Configure → User & authentication**, a user who signs up with Google alone has none, and shows as their Clerk id (`user_2abc...`) until they set one in the account menu.
 - **No roles.** Every signed-in user has the same rights; there is no admin who can moderate other people's wants.
 - **Pictures live in Clerk.** The app stores only each picture's URL, so moving off Clerk would mean moving everyone's picture too. Other people see a changed picture the next time they load the list; nothing in the app updates live.
-- **Only wants have a response type.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `imageUrl`. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users needs its own response type.
+- **No way to find people yet.** Follows are made through the API by user id; the app has no search and no follow button.
+- **Other users go out as response types only.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `imageUrl`, and `GET /follows` returns `UserSummary`, with the same three fields. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users should return `UserSummary` or its own response type.
 - **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext, including the CloudFront origin secret. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed

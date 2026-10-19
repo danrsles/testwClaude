@@ -107,11 +107,11 @@ State is local `useState`. All server data is refetched after each mutation, whi
 
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
 
-- `models` — JPA entities and enums (`Want`, `User`, `Category`)
-- `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`)
-- `services` — business logic, the only layer controllers talk to (`WantService`, `UserService`), plus `ClerkIdentity`
-- `controllers` — HTTP endpoints (`WantController`, `UserController`), plus `Identities`, which turns a token into a `ClerkIdentity`
-- `dto` — request bodies with their Bean Validation constraints (`WantRequest`) and response shapes (`WantResponse`). New request and response records go here, not in `controllers`.
+- `models` — JPA entities and enums (`Want`, `User`, `Follow`, `Category`)
+- `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`, `FollowRepository`)
+- `services` — business logic, the only layer controllers talk to (`WantService`, `UserService`, `FollowService`), plus `ClerkIdentity`
+- `controllers` — HTTP endpoints (`WantController`, `UserController`, `FollowController`), plus `Identities`, which turns a token into a `ClerkIdentity`
+- `dto` — request bodies with their Bean Validation constraints (`WantRequest`) and response shapes (`WantResponse`, `UserSummary`). New request and response records go here, not in `controllers`.
 - `security` — `SecurityConfig` (the filter chain), `ClerkJwtConfig` (the `JwtDecoder`), `AuthorizedPartyValidator` (the `azp` check) and `OriginSecretFilter`, which rejects requests that did not come through CloudFront
 
 **Authentication.** Every route needs a Clerk session token in `Authorization: Bearer`, except `/actuator/health` and `/error`. Spring Security runs as an OAuth2 resource server. It is stateless, and CSRF is off, because nothing reads cookies.
@@ -142,8 +142,10 @@ Controllers depend on services, never on repositories directly, and all dependen
 Endpoints:
 
 - `GET /me` — the signed-in user (`id`, `username`, `clerkId`, `email`, `lastSignInAt`, `imageUrl`), created on first call. Read-only: every field comes from Clerk, so there is no `PUT /me` (it answers 405). **There is deliberately no route to another user's record.**
-- `GET /wants` — every want, from every user, as `WantResponse` (`{id, message, category, userId, username, imageUrl}`). It first runs `UserService.current` for the caller in the same transaction, so a picture or username just changed in Clerk shows beside their own wants in that response rather than racing the page's parallel `GET /me`. The list can be narrowed by an optional `?category=` parameter. Spring converts that parameter to the `Category` enum by exact name, so `FOOD` works while `food` or an unknown value yields 400 before the controller runs.
+- `GET /wants` — **your feed**: your own wants plus those of everyone you follow, never anyone else's, as `WantResponse` (`{id, message, category, userId, username, imageUrl}`), ordered by want id. `WantRepository.findFeed` / `findFeedByCategory` are JPQL with a `Follow` subquery; Spring Data parses them at startup, so a mistake there fails `mvn spring-boot:run` but not `mvn test`. It first runs `UserService.current` for the caller in the same transaction, so a picture or username just changed in Clerk shows beside their own wants in that response rather than racing the page's parallel `GET /me`. The list can be narrowed by an optional `?category=` parameter. Spring converts that parameter to the `Category` enum by exact name, so `FOOD` works while `food` or an unknown value yields 400 before the controller runs.
 - `POST /wants`, `PUT /wants/{id}`, `DELETE /wants/{id}` — `WantRequest` is `{"message", "category"}` with Bean Validation constraints, so a blank message or unknown category is a 400 before the service is reached. The owner is the token's user, and an unknown property such as a stale `userId` is ignored. Changing someone else's want is a 403 via `WantForbiddenException`, which carries `@ResponseStatus` rather than needing an exception handler.
+- `PUT /follows/{userId}`, `DELETE /follows/{userId}` — follow or unfollow, both 204 and idempotent. The follower is the token's user. Following yourself is a 400 (`CannotFollowYourselfException`), an unknown user a 404 (`UserNotFoundException`). Following again is a no-op through `FollowRepository.followIfAbsent`, a native `INSERT ... ON CONFLICT DO NOTHING`, for the same rollback-only reason as `insertIfAbsent`. **There is no follow UI and no user search yet**; follows are made with curl (see the README).
+- `GET /follows` — the users you follow, as `UserSummary` (`{id, username, imageUrl}`).
 - `GET /actuator/health` — the only unauthenticated route. Actuator exposes nothing else by default, and the health details stay hidden.
 
 **Every field of `User` comes from Clerk:** `username`, `clerk_id`, `email`, `last_sign_in_at` and `image_url`, all copied from the token by `UserService`. Nothing about a user is edited through this API.
@@ -153,9 +155,11 @@ Endpoints:
 **`User` holds private data**, so it is serialized **only for its own user**, by `GET /me`. **Never return a `User`, or an entity that embeds one, for another user.**
 - Wants are returned as `WantResponse` (`id`, `message`, `category`, `userId`, `username`, `imageUrl`). The picture URL is public by design.
 - `WantControllerTest.neverExposesTheOwnersPrivateDetails` guards that.
-- Any new endpoint that lists other people's data needs its own response record copying only public fields.
+- Any new endpoint that lists other people's data needs its own response record copying only public fields. `UserSummary` is that record for users (`GET /follows`), guarded by `FollowControllerTest.listsWhoYouFollowByPublicDetailsOnly`.
 
 Each `Want` belongs to a `User` through a non-null `@ManyToOne` (`user_id`, a real foreign key). The association is deliberately unidirectional: a `User` has no `List<Want>`, which avoids the infinite recursion a bidirectional pair would cause during JSON serialization. Query wants by user through the repository rather than navigating from the user.
+
+`Follow` (`follows` table) is the same shape: two non-null eager `@ManyToOne`s to `User`, `follower` and `followee`, and no collections on `User`. The table has `UNIQUE (follower_id, followee_id)` and `CHECK (follower_id <> followee_id)`. `created_at` is filled by the database, so the entity maps it read-only.
 
 `@ManyToOne` defaults to eager fetching, and that matters here because `spring.jpa.open-in-view=false` closes the persistence context before serialization — a lazy association would throw `LazyInitializationException` while Jackson writes the response. If this is ever made lazy for performance, the controller's query must fetch-join the user.
 
@@ -178,7 +182,7 @@ The project moved from MySQL to PostgreSQL once, and V1 and V3 were rewritten in
 
 SQL notes for this schema: ids are `BIGINT GENERATED BY DEFAULT AS IDENTITY`, which `GenerationType.IDENTITY` maps to. Enum-like columns such as `wants.category` are `VARCHAR` with a `CHECK` constraint, not native PostgreSQL enum types — `@Enumerated(EnumType.STRING)` is validated as a character column, and a native enum would fail `ddl-auto=validate`. PostGIS and `btree_gist` are available on the hosted database and in the local image; enable them with `CREATE EXTENSION IF NOT EXISTS` in the migration that first needs them.
 
-`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` created the profiles table that `V7__merge_user_profiles_into_users.sql` later moves onto `users` and drops. `V8__clerk_picture_drop_nickname.sql` drops `users.nickname` and renames `s3_url` to `image_url`, emptied so each user's next request fills in their Clerk picture. V3 and V4 stay, because they have been applied; deleting or editing them would break Flyway's checksums.
+`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` created the profiles table that `V7__merge_user_profiles_into_users.sql` later moves onto `users` and drops. `V8__clerk_picture_drop_nickname.sql` drops `users.nickname` and renames `s3_url` to `image_url`, emptied so each user's next request fills in their Clerk picture. `V9__create_follows.sql` creates `follows`. `V10__seed_test_users.sql` adds `alex`, `sam` and `jordan` with two wants each and no `clerk_id`, so they are read-only like `dani` and appear in your list only once you follow them. Like V2, V10 runs in every environment, so delete it before real use. Your own follows can't be seeded: your row only exists after your first sign-in. V3 and V4 stay, because they have been applied; deleting or editing them would break Flyway's checksums.
 
 Resetting from scratch — the only safe way to replay migrations, and it destroys all data:
 
