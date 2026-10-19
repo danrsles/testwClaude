@@ -25,11 +25,23 @@ public class WantService {
         this.userService = userService;
     }
 
-    public List<Want> findAll() {
+    /**
+     * Every want. The signed-in user is brought up to date from their token
+     * first, in the same transaction, so a picture or username just changed in
+     * Clerk shows beside their own wants in this very response. Otherwise it
+     * would depend on GET /me, which the page sends at the same time, happening
+     * to finish first.
+     */
+    @Transactional
+    public List<Want> findAll(ClerkIdentity who) {
+        userService.current(who);
         return wantRepository.findAll();
     }
 
-    public List<Want> findByCategory(Category category) {
+    /** As findAll, narrowed to one category. */
+    @Transactional
+    public List<Want> findByCategory(Category category, ClerkIdentity who) {
+        userService.current(who);
         return wantRepository.findByCategory(category);
     }
 

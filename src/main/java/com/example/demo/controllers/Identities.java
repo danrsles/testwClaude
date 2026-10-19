@@ -17,7 +17,18 @@ final class Identities {
                 jwt.getSubject(),
                 jwt.getClaimAsString("username"),
                 jwt.getClaimAsString("email"),
-                epochSeconds(jwt.getClaim("lastLogin")));
+                epochSeconds(jwt.getClaim("lastLogin")),
+                pictureOf(jwt));
+    }
+
+    /**
+     * Clerk always has an image_url: your photo, or a generated silhouette
+     * when you have not set one. Both are used as they are, so the app shows
+     * the same picture as Clerk's account button. Blank counts as none.
+     */
+    private static String pictureOf(Jwt jwt) {
+        String url = jwt.getClaimAsString("imageUrl");
+        return url == null || url.isBlank() ? null : url.strip();
     }
 
     /**

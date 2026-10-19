@@ -5,6 +5,7 @@ import java.util.List;
 import com.example.demo.dto.WantRequest;
 import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
+import com.example.demo.services.ClerkIdentity;
 import com.example.demo.services.WantService;
 
 import jakarta.validation.Valid;
@@ -35,8 +36,10 @@ public class WantController {
     }
 
     @GetMapping
-    public List<WantResponse> wants(@RequestParam(required = false) Category category) {
-        var wants = category == null ? wantService.findAll() : wantService.findByCategory(category);
+    public List<WantResponse> wants(@AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Category category) {
+        ClerkIdentity who = Identities.of(jwt);
+        var wants = category == null ? wantService.findAll(who) : wantService.findByCategory(category, who);
         return wants.stream().map(WantResponse::from).toList();
     }
 

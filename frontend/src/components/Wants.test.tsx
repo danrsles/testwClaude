@@ -1,8 +1,10 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { getToken } from '@clerk/react'
 import { getMe } from '../api/me'
 import { createWant, deleteWant, listWants, updateWant } from '../api/wants'
+import placeholder from '../assets/avatar-placeholder.svg'
 import MeProvider from '../hooks/MeProvider'
 import type { Category, User, Want } from '../types/wants'
 import Wants from './Wants'
@@ -17,18 +19,29 @@ vi.mock('../api/wants', () => ({
   deleteWant: vi.fn(),
 }))
 
-vi.mock('../api/me', () => ({ getMe: vi.fn(), updateMe: vi.fn() }))
+vi.mock('../api/me', () => ({ getMe: vi.fn() }))
 
-const DANI: User = { id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null, nickname: null, s3Url: null }
-const SAM: User = { id: 2, username: 'sam', clerkId: 'user_sam', email: null, lastSignInAt: null, nickname: 'Sammy', s3Url: null }
+// The signed-in user's Clerk picture, which a test can change to play the
+// part of the account menu, and the token call made when it changes.
+const clerk = vi.hoisted(() => ({
+  user: { imageUrl: 'https://img.clerk.com/old.jpg' } as { imageUrl: string } | undefined,
+}))
+
+vi.mock('@clerk/react', () => ({
+  useUser: () => ({ user: clerk.user }),
+  getToken: vi.fn(),
+}))
+
+const DANI: User = { id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null, imageUrl: null }
+const SAM: User = { id: 2, username: 'sam', clerkId: 'user_sam', email: null, lastSignInAt: null, imageUrl: 'https://img.clerk.com/sam.jpg' }
 
 function want(id: number, message: string, category: Category = 'FOOD', owner = DANI): Want {
-  return { id, message, category, userId: owner.id, username: owner.username }
+  return { id, message, category, userId: owner.id, username: owner.username, imageUrl: owner.imageUrl }
 }
 
 // Wants reads the signed-in user from useMe, so it renders inside the provider.
 function renderWants() {
-  render(
+  return render(
     <MeProvider>
       <Wants />
     </MeProvider>,
@@ -39,6 +52,8 @@ describe('Wants', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(getMe).mockResolvedValue(DANI)
+    vi.mocked(getToken).mockResolvedValue('fresh-token')
+    clerk.user = { imageUrl: 'https://img.clerk.com/old.jpg' }
     vi.mocked(listWants).mockResolvedValue([
       want(1, 'Ramen downtown'),
       want(2, 'Dune Part Two', 'MOVIE'),
@@ -137,5 +152,50 @@ describe('Wants', () => {
 
     expect(await screen.findByText('sam')).toBeInTheDocument()
     expect(screen.getByText('dani')).toBeInTheDocument()
+  })
+
+  it("shows each owner's picture beside their want, or the placeholder without one", async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown'),
+      want(2, 'Dune Part Two', 'MOVIE', SAM),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    // Decorative: the username beside each picture already names the owner.
+    const pictures = screen.getAllByRole('presentation')
+    expect(pictures.map((img) => img.getAttribute('src'))).toEqual([placeholder, 'https://img.clerk.com/sam.jpg'])
+  })
+
+  it('reloads the list with a fresh token when you change your picture in Clerk', async () => {
+    const { rerender } = renderWants()
+    await screen.findByText('Ramen downtown')
+    expect(listWants).toHaveBeenCalledTimes(1)
+
+    clerk.user = { imageUrl: 'https://img.clerk.com/new.jpg' }
+    rerender(
+      <MeProvider>
+        <Wants />
+      </MeProvider>,
+    )
+
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+    expect(getToken).toHaveBeenCalledWith({ skipCache: true })
+  })
+
+  it('does not reload just because Clerk finished loading your user', async () => {
+    clerk.user = undefined
+    const { rerender } = renderWants()
+    await screen.findByText('Ramen downtown')
+
+    clerk.user = { imageUrl: 'https://img.clerk.com/old.jpg' }
+    rerender(
+      <MeProvider>
+        <Wants />
+      </MeProvider>,
+    )
+
+    expect(getToken).not.toHaveBeenCalled()
+    expect(listWants).toHaveBeenCalledTimes(1)
   })
 })

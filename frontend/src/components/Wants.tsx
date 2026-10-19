@@ -1,9 +1,11 @@
 ﻿import { useState } from 'react'
 import type { SubmitEvent } from 'react'
 import { useMe } from '../hooks/useMe'
+import { useOnPictureChange } from '../hooks/useOnPictureChange'
 import { useWants } from '../hooks/useWants'
 import { CATEGORIES } from '../types/wants'
 import type { Category, Want } from '../types/wants'
+import Avatar from './Avatar'
 
 const TAG: Record<Category, string> = {
   FOOD: 'bg-food',
@@ -19,7 +21,10 @@ const TAG: Record<Category, string> = {
  */
 export default function Wants() {
   const [filter, setFilter] = useState<Category | ''>('')
-  const { wants, loading, error, add, update, remove } = useWants(filter)
+  const { wants, loading, error, refresh, add, update, remove } = useWants(filter)
+  // Your picture beside your wants comes from the API, so reload the list as
+  // soon as you change it in Clerk's account menu.
+  useOnPictureChange(refresh)
   // Only the owner may change a want. The API enforces that; this just hides
   // controls that would fail.
   const { me } = useMe()
@@ -136,7 +141,9 @@ export default function Wants() {
                 <span className="flex-1 basis-40">{want.message}</span>
               )}
 
-              <span className="text-sm text-stone-500 dark:text-stone-400">
+              {/* The picture is decorative: the username beside it names the owner. */}
+              <span className="flex items-center gap-1.5 text-sm text-stone-500 dark:text-stone-400">
+                <Avatar src={want.imageUrl} alt="" size={24} />
                 {want.username}
               </span>
 

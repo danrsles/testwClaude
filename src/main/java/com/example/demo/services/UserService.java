@@ -22,11 +22,11 @@ public class UserService {
      * request. Clerk owns sign-up, so there is no endpoint that creates users;
      * a valid token is enough to have one.
      *
-     * Clerk also owns the username, the email and the last sign-in time: what
-     * the token carries is copied here on creation and whenever it changes in
-     * Clerk. The user is managed, so a change is written when the transaction
-     * commits, and an unchanged user, as on almost every request, is not
-     * written at all. Without a username, the username is the Clerk id, which
+     * Clerk also owns the username, the email, the last sign-in time and the
+     * profile picture: what the token carries is copied here on creation and
+     * whenever it changes in Clerk. The user is managed, so a change is
+     * written when the transaction commits, and an unchanged user, as on
+     * almost every request, is not written at all. Without a username, the username is the Clerk id, which
      * is always unique.
      */
     @Transactional
@@ -35,22 +35,6 @@ public class UserService {
         syncUsername(user, who.username());
         syncAccountDetails(user, who);
         return user;
-    }
-
-    /**
-     * Replaces the fields you edit yourself. Blank means cleared, so the UI
-     * falls back to the username and the placeholder picture.
-     */
-    @Transactional
-    public User updateMe(ClerkIdentity who, String nickname, String s3Url) {
-        User user = current(who);
-        user.setNickname(blankToNull(nickname));
-        user.setS3Url(blankToNull(s3Url));
-        return user;
-    }
-
-    private static String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value.strip();
     }
 
     private User create(ClerkIdentity who) {
@@ -76,7 +60,11 @@ public class UserService {
         user.setUsername(wanted);
     }
 
-    /** A missing claim never erases what is stored. */
+    /**
+     * A missing claim never erases what is stored. The picture needs no
+     * exception: removing your photo in Clerk does not empty image_url, it
+     * swaps in Clerk's silhouette, which is copied like any other change.
+     */
     private static void syncAccountDetails(User user, ClerkIdentity who) {
         String email = who.email() == null || who.email().isBlank() ? null : who.email().strip();
         if (email != null && !email.equals(user.getEmail())) {
@@ -84,6 +72,9 @@ public class UserService {
         }
         if (who.lastSignInAt() != null && !Objects.equals(who.lastSignInAt(), user.getLastSignInAt())) {
             user.setLastSignInAt(who.lastSignInAt());
+        }
+        if (who.imageUrl() != null && !who.imageUrl().equals(user.getImageUrl())) {
+            user.setImageUrl(who.imageUrl());
         }
     }
 }

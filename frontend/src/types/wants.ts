@@ -3,8 +3,8 @@ export const CATEGORIES = ['FOOD', 'MOVIE', 'GAME', 'TRIP'] as const
 export type Category = (typeof CATEGORIES)[number]
 
 /**
- * The signed-in user, account and profile in one, from GET /me. The API only
- * ever returns your own, so the private fields are yours.
+ * The signed-in user, from GET /me, every field copied from Clerk. The API
+ * only ever returns your own, so the private fields are yours.
  */
 export interface User {
   id: number
@@ -15,21 +15,13 @@ export interface User {
   email: string | null
   /** ISO timestamp of the last sign-in, per Clerk. */
   lastSignInAt: string | null
-  /** Shown to others; null until set, when the UI falls back to username. */
-  nickname: string | null
-  /** Avatar location; null until set, when the UI shows a placeholder. */
-  s3Url: string | null
-}
-
-/** Body for PUT /me. Username and email are Clerk's, so they are not here. */
-export interface UpdateMeRequest {
-  nickname: string | null
-  s3Url: string | null
+  /** Clerk profile picture (a silhouette if no photo); null only before Clerk has sent it, when the UI shows a placeholder. */
+  imageUrl: string | null
 }
 
 /**
  * Everyone's wants are visible to every signed-in user, so the owner comes as
- * just an id and a username, never a whole User.
+ * just an id, a username and a picture, never a whole User.
  */
 export interface Want {
   id: number
@@ -37,6 +29,8 @@ export interface Want {
   category: Category
   userId: number
   username: string
+  /** The owner's Clerk profile picture; null for owners Clerk has told us nothing about, such as the seeded dani. */
+  imageUrl: string | null
 }
 
 /** The owner is whoever is signed in, so there is no userId. */

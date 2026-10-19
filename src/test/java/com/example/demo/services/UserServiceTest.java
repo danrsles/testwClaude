@@ -105,28 +105,40 @@ class UserServiceTest {
         assertThat(user.getLastSignInAt()).isEqualTo(Instant.ofEpochSecond(1792177886));
     }
 
+    private static final String PICTURE = "https://img.clerk.com/dani.jpg";
+
     @Test
-    void updatesTheNicknameAndAvatar() {
+    void copiesThePictureFromTheToken() {
         User user = stored(3, "dani2", "user_abc");
         given(userRepository.findByClerkId("user_abc")).willReturn(Optional.of(user));
 
-        userService.updateMe(new ClerkIdentity("user_abc", "dani2"), "  Dani  ", "https://example.com/d.png");
+        userService.current(new ClerkIdentity("user_abc", "dani2", null, null, PICTURE));
 
-        assertThat(user.getNickname()).isEqualTo("Dani");
-        assertThat(user.getS3Url()).isEqualTo("https://example.com/d.png");
+        assertThat(user.getImageUrl()).isEqualTo(PICTURE);
     }
 
     @Test
-    void blankFieldsClearTheNicknameAndAvatar() {
+    void followsAChangeOfPicture() {
+        // Removing your photo in Clerk arrives the same way: as the URL of its silhouette.
         User user = stored(3, "dani2", "user_abc");
-        user.setNickname("Dani");
-        user.setS3Url("https://example.com/d.png");
+        user.setImageUrl(PICTURE);
         given(userRepository.findByClerkId("user_abc")).willReturn(Optional.of(user));
 
-        userService.updateMe(new ClerkIdentity("user_abc", "dani2"), " ", null);
+        userService.current(new ClerkIdentity("user_abc", "dani2", null, null, "https://img.clerk.com/silhouette.png"));
 
-        assertThat(user.getNickname()).isNull();
-        assertThat(user.getS3Url()).isNull();
+        assertThat(user.getImageUrl()).isEqualTo("https://img.clerk.com/silhouette.png");
+    }
+
+    @Test
+    void keepsThePictureWhenTheTokenHasNoPictureClaim() {
+        // A session token template without imageUrl says nothing either way.
+        User user = stored(3, "dani2", "user_abc");
+        user.setImageUrl(PICTURE);
+        given(userRepository.findByClerkId("user_abc")).willReturn(Optional.of(user));
+
+        userService.current(new ClerkIdentity("user_abc", "dani2"));
+
+        assertThat(user.getImageUrl()).isEqualTo(PICTURE);
     }
 
     @Test

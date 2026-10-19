@@ -1,16 +1,13 @@
 import { Show, UserButton } from '@clerk/react'
 import { NavLink, Route, Routes } from 'react-router'
 import Info from './components/Info'
-import ProfileBadge from './components/ProfileBadge'
 import SignInScreen from './components/SignInScreen'
-import UserProfile from './components/UserProfile'
 import Wants from './components/Wants'
 import MeProvider from './hooks/MeProvider'
 
 const NAV = [
   { to: '/', label: 'Wants' },
   { to: '/info', label: 'Info' },
-  { to: '/profile', label: 'Profile' },
 ]
 
 /**
@@ -31,7 +28,7 @@ export default function App() {
         <SignInScreen />
       </Show>
       <Show when="signed-in">
-        {/* One GET /me, shared by the badge, the wants list and the profile page. */}
+        {/* One GET /me, which the wants list uses to tell your wants from others'. */}
         <MeProvider>
           <main className="mx-auto max-w-3xl px-4 pt-6 pb-16">
             <header className="mb-8 flex flex-wrap items-center justify-between gap-3">
@@ -51,17 +48,13 @@ export default function App() {
                   </NavLink>
                 ))}
               </nav>
-              <div className="flex items-center gap-2">
-                <ProfileBadge />
-                {/* Clerk's account menu: manage the account, sign out. */}
-                <UserButton />
-              </div>
+              {/* Clerk's account menu: picture, username, email, sign out. */}
+              <UserButton />
             </header>
 
             <Routes>
               <Route path="/" element={<Wants />} />
               <Route path="/info" element={<Info />} />
-              <Route path="/profile" element={<UserProfile />} />
             </Routes>
           </main>
         </MeProvider>

@@ -12,15 +12,24 @@ import java.time.Instant;
  * <pre>
  * { "username": "{{user.username}}",
  *   "email": "{{user.primary_email_address}}",
- *   "lastLogin": "{{user.last_sign_in_at}}" }
+ *   "lastLogin": "{{user.last_sign_in_at}}",
+ *   "imageUrl": "{{user.image_url}}" }
  * </pre>
  *
  * @param clerkId      the token's "sub": the Clerk user id, never null
  * @param username     "username"
  * @param email        "email", the user's primary email address in Clerk
  * @param lastSignInAt "lastLogin", when the user last signed in
+ * @param imageUrl     "imageUrl", the profile picture: the user's photo, or
+ *                     Clerk's generated silhouette when they have none
  */
-public record ClerkIdentity(String clerkId, String username, String email, Instant lastSignInAt) {
+public record ClerkIdentity(String clerkId, String username, String email, Instant lastSignInAt,
+        String imageUrl) {
+
+    /** An identity from a token without the picture claim. */
+    public ClerkIdentity(String clerkId, String username, String email, Instant lastSignInAt) {
+        this(clerkId, username, email, lastSignInAt, null);
+    }
 
     /** An identity from a token carrying only a username, as in most tests. */
     public ClerkIdentity(String clerkId, String username) {
