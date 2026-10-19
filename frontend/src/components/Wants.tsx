@@ -1,6 +1,6 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import type { SubmitEvent } from 'react'
-import { DEFAULT_USER_ID } from '../currentUser'
+import { useMe } from '../hooks/useMe'
 import { useWants } from '../hooks/useWants'
 import { CATEGORIES } from '../types/wants'
 import type { Category, Want } from '../types/wants'
@@ -13,13 +13,17 @@ const TAG: Record<Category, string> = {
 }
 
 /**
- * The whole wants screen: the add form, the category filter, and the list with
- * each row editable in place. Server state comes from useWants; everything held
- * here is UI state belonging to this screen.
+ * The whole wants screen: the add form, the category filter, and the list,
+ * where the signed-in user's own rows are editable in place. Server state comes
+ * from useWants; everything held here is UI state belonging to this screen.
  */
 export default function Wants() {
   const [filter, setFilter] = useState<Category | ''>('')
   const { wants, loading, error, add, update, remove } = useWants(filter)
+  // Only the owner may change a want. The API enforces that; this just hides
+  // controls that would fail.
+  const { me } = useMe()
+  const isMine = (want: Want) => me !== null && want.userId === me.id
 
   const [message, setMessage] = useState('')
   const [category, setCategory] = useState<Category>('FOOD')
@@ -31,14 +35,14 @@ export default function Wants() {
     const text = message.trim()
     if (!text) return
     // Only clear the input if the API accepted it, so a failure keeps the text.
-    if (await add(text, category, DEFAULT_USER_ID)) setMessage('')
+    if (await add(text, category)) setMessage('')
   }
 
   async function saveEdit(want: Want) {
     const text = draft.trim()
     if (!text) return
     // Leave the row open on failure so the edit is not silently lost.
-    if (await update(want.id, text, want.category, want.user.id)) setEditingId(null)
+    if (await update(want.id, text, want.category)) setEditingId(null)
   }
 
   return (
@@ -133,7 +137,7 @@ export default function Wants() {
               )}
 
               <span className="text-sm text-stone-500 dark:text-stone-400">
-                {want.user.username}
+                {want.username}
               </span>
 
               <span className="ml-auto flex gap-1.5">
@@ -149,12 +153,12 @@ export default function Wants() {
                       Cancel
                     </button>
                   </>
-                ) : (
+                ) : isMine(want) ? (
                   <>
                     <select
                       value={want.category}
                       onChange={(e) =>
-                        update(want.id, want.message, e.target.value as Category, want.user.id)
+                        update(want.id, want.message, e.target.value as Category)
                       }
                       aria-label="Change category"
                       className="field px-2 py-1.5 text-sm"
@@ -181,7 +185,7 @@ export default function Wants() {
                       Delete
                     </button>
                   </>
-                )}
+                ) : null}
               </span>
             </li>
           ))}

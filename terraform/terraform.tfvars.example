@@ -2,6 +2,10 @@
 ssh_cidr = "CHANGEME/32" # your public IP
 key_name = "CHANGEME"    # an existing EC2 key pair name
 
+# Clerk's Frontend API URL. Defaults to the project's instance in variables.tf;
+# set it only to point at a different Clerk instance.
+# clerk_issuer = "https://<name>.clerk.accounts.dev"
+
 # Hosted database (Aiven). sslrootcert must stay /certs/ca.pem: that is where
 # the certificate is mounted inside the container, not a path on your machine.
 db_url      = "jdbc:postgresql://CHANGEME.aivencloud.com:CHANGEME/defaultdb?sslmode=verify-full&sslrootcert=/certs/ca.pem"

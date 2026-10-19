@@ -1,64 +1,40 @@
 import { useState } from 'react'
 import type { SubmitEvent } from 'react'
-import { useUserProfile } from '../hooks/useUserProfile'
-import type { UpdateUserProfileRequest } from '../types/userProfiles'
+import { useMe } from '../hooks/useMe'
 import Avatar from './Avatar'
 
-interface Props {
-  /** The user whose profile this page shows and edits. */
-  userId: number
-}
-
 interface Draft {
-  email: string
   nickname: string
   s3Url: string
 }
 
-const EMPTY: Draft = { email: '', nickname: '', s3Url: '' }
-
-function toRequest(draft: Draft): UpdateUserProfileRequest {
-  const s3Url = draft.s3Url.trim()
-  return { email: draft.email.trim(), nickname: draft.nickname.trim(), s3Url: s3Url || null }
-}
-
 /**
- * One user's profile page. Shows the profile with Edit and Delete, swaps to an
- * inline form while editing, and offers a create form when the user has no
- * profile yet. Server state comes from useUserProfile; the draft and whether
- * the form is open are UI state held here.
+ * The signed-in user's profile page. Shows how you appear, with Edit swapping
+ * to an inline form for the two things you set yourself: nickname and avatar.
+ * Username and email come from your Clerk account and change in its account
+ * menu, so they are shown here but not editable. Server state comes from
+ * useMe; the draft and whether the form is open are UI state held here.
  */
-export default function UserProfile({ userId }: Props) {
-  const { profile, loading, error, create, update, remove } = useUserProfile(userId)
+export default function UserProfile() {
+  const { me, loading, error, update } = useMe()
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState<Draft>(EMPTY)
+  const [draft, setDraft] = useState<Draft>({ nickname: '', s3Url: '' })
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
-    const fields = toRequest(draft)
-    if (!fields.email || !fields.nickname) return
+    const nickname = draft.nickname.trim()
+    const s3Url = draft.s3Url.trim()
     // Close the form only if the API accepted it, so a failure keeps the text.
-    const ok = profile ? await update(fields) : await create(fields)
-    if (ok) {
-      setEditing(false)
-      setDraft(EMPTY)
-    }
+    if (await update({ nickname: nickname || null, s3Url: s3Url || null })) setEditing(false)
   }
 
   function startEditing() {
-    if (!profile) return
-    setDraft({ email: profile.email, nickname: profile.nickname, s3Url: profile.s3Url ?? '' })
+    if (!me) return
+    setDraft({ nickname: me.nickname ?? '', s3Url: me.s3Url ?? '' })
     setEditing(true)
   }
 
-  async function confirmDelete() {
-    if (!profile) return
-    if (!window.confirm(`Delete the profile for ${profile.nickname}?`)) return
-    await remove()
-  }
-
-  const showForm = !loading && (editing || !profile)
-  const canSubmit = draft.email.trim() !== '' && draft.nickname.trim() !== ''
+  const shownName = me?.nickname ?? me?.username ?? ''
 
   return (
     <>
@@ -78,66 +54,50 @@ export default function UserProfile({ userId }: Props) {
 
       {loading ? (
         <p className="py-9 text-center text-stone-500 dark:text-stone-400">Loading...</p>
-      ) : (
+      ) : me ? (
         <section className="rounded-xl border border-stone-200 bg-white p-5 dark:border-stone-800 dark:bg-stone-900">
-          {profile && !editing && (
+          {!editing ? (
             <div className="flex flex-wrap items-center gap-5">
-              <Avatar src={profile.s3Url} alt={`${profile.nickname}'s profile picture`} size={96} />
+              <Avatar src={me.s3Url} alt={`${shownName}'s profile picture`} size={96} />
               <div className="min-w-48 flex-1">
-                <h2 className="text-2xl font-semibold">{profile.nickname}</h2>
-                <p className="break-all text-stone-600 dark:text-stone-300">{profile.email}</p>
-                <p className="text-sm text-stone-500 dark:text-stone-400">
-                  @{profile.user.username}
-                </p>
+                <h2 className="text-2xl font-semibold">{shownName}</h2>
+                {me.email && (
+                  <p className="break-all text-stone-600 dark:text-stone-300">{me.email}</p>
+                )}
+                <p className="text-sm text-stone-500 dark:text-stone-400">@{me.username}</p>
+                {!me.nickname && (
+                  <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
+                    Add a nickname to choose how others see you.
+                  </p>
+                )}
               </div>
-              <div className="flex gap-1.5">
-                <button onClick={startEditing} className="btn px-3 py-1.5 text-sm">
-                  Edit
-                </button>
-                <button
-                  onClick={confirmDelete}
-                  className="btn px-3 py-1.5 text-sm text-red-700 hover:border-red-600 dark:text-red-400"
-                >
-                  Delete
-                </button>
-              </div>
+              <button onClick={startEditing} className="btn px-3 py-1.5 text-sm">
+                Edit
+              </button>
             </div>
-          )}
-
-          {showForm && (
+          ) : (
             <form onSubmit={submit} className="flex flex-col gap-4">
               <div className="flex items-center gap-4">
-                <Avatar
-                  src={draft.s3Url.trim() || null}
-                  alt="Profile picture preview"
-                  size={64}
-                />
-                <h2 className="text-lg font-semibold">
-                  {profile ? 'Edit profile' : 'Create your profile'}
-                </h2>
+                <Avatar src={draft.s3Url.trim() || null} alt="Profile picture preview" size={64} />
+                <h2 className="text-lg font-semibold">Edit profile</h2>
               </div>
 
-              <label className="flex flex-col gap-1 text-sm font-medium">
-                Nickname
-                <input
-                  value={draft.nickname}
-                  onChange={(e) => setDraft({ ...draft, nickname: e.target.value })}
-                  maxLength={100}
-                  required
-                  className="field px-3 py-2 font-normal"
-                />
-              </label>
-
-              <label className="flex flex-col gap-1 text-sm font-medium">
-                Email
-                <input
-                  type="email"
-                  value={draft.email}
-                  onChange={(e) => setDraft({ ...draft, email: e.target.value })}
-                  required
-                  className="field px-3 py-2 font-normal"
-                />
-              </label>
+              <div className="flex flex-col gap-1 text-sm">
+                <label className="flex flex-col gap-1 font-medium">
+                  Nickname (optional)
+                  <input
+                    value={draft.nickname}
+                    onChange={(e) => setDraft({ ...draft, nickname: e.target.value })}
+                    maxLength={100}
+                    placeholder={me.username}
+                    aria-describedby="nickname-hint"
+                    className="field px-3 py-2 font-normal"
+                  />
+                </label>
+                <span id="nickname-hint" className="text-stone-500 dark:text-stone-400">
+                  Leave blank to show your username.
+                </span>
+              </div>
 
               <div className="flex flex-col gap-1 text-sm">
                 {/* The hint sits outside the label so it describes the field rather than naming it. */}
@@ -157,28 +117,26 @@ export default function UserProfile({ userId }: Props) {
                 </span>
               </div>
 
+              <p className="text-sm text-stone-500 dark:text-stone-400">
+                Your username and email come from your account. Change them from the account menu
+                in the top right.
+              </p>
+
               <div className="flex gap-2">
                 <button
                   type="submit"
-                  disabled={!canSubmit}
-                  className="cursor-pointer rounded-lg bg-emerald-700 px-5 py-2 font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="cursor-pointer rounded-lg bg-emerald-700 px-5 py-2 font-medium text-white hover:bg-emerald-800"
                 >
-                  {profile ? 'Save' : 'Create profile'}
+                  Save
                 </button>
-                {profile && (
-                  <button
-                    type="button"
-                    onClick={() => setEditing(false)}
-                    className="btn px-4 py-2"
-                  >
-                    Cancel
-                  </button>
-                )}
+                <button type="button" onClick={() => setEditing(false)} className="btn px-4 py-2">
+                  Cancel
+                </button>
               </div>
             </form>
           )}
         </section>
-      )}
+      ) : null}
     </>
   )
 }

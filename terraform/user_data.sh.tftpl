@@ -41,6 +41,8 @@ umask 077
   printf "DB_USER='%s'\n" '${db_user}'
   printf "DB_PASSWORD='%s'\n" "$DB_PASSWORD"
   printf "ORIGIN_SECRET='%s'\n" "$ORIGIN_SECRET"
+  printf "CLERK_ISSUER='%s'\n" '${clerk_issuer}'
+  printf "CLERK_AUTHORIZED_PARTIES='%s'\n" '${clerk_authorized_parties}'
 } > .env
 umask 022
 unset DB_PASSWORD ORIGIN_SECRET

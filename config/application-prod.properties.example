@@ -17,3 +17,8 @@ spring.datasource.password=CHANGEME
 # check off, ORIGIN_SECRET is not needed.
 app.origin-check.enabled=false
 app.origin-secret=
+
+# Tokens come from the same Clerk instance as in production, but are issued to
+# the Vite dev server's origin.
+app.auth.issuer=https://CHANGEME.clerk.accounts.dev
+app.auth.authorized-parties=http://localhost:5173

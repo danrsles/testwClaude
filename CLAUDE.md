@@ -49,31 +49,41 @@ The dev server proxies `/api/*` to `http://localhost:8080`, stripping the prefix
 `src/` is organised by role:
 
 ```
-src/api/http.ts                 the shared `fail` helper that turns a bad response into an Error
+src/api/http.ts                 `fail`, plus `authFetch`, which attaches the Clerk session token
 src/api/wants.ts                transport: one function per endpoint, no state
-src/api/userProfiles.ts         the same for /user/profiles
+src/api/me.ts                   the same for /me (GET and PUT)
 src/hooks/useWants.ts           server state: the cached list and its mutations
-src/hooks/useUserProfile.ts     server state: one user's profile (or null) and its mutations
+src/hooks/MeProvider.tsx        server state: the signed-in user, loaded once and shared
+src/hooks/useMe.ts              the context MeProvider fills, and the hook that reads it
 src/types/wants.ts              the shapes the API returns and accepts
-src/types/userProfiles.ts       the same for profiles
-src/currentUser.ts              DEFAULT_USER_ID, the user the app acts as until there is a login
 src/components/Wants.tsx        the whole wants screen, including its own UI state
 src/components/Info.tsx         a static about page, routed at /info
-src/components/UserProfile.tsx  the profile page at /profile: view, edit, delete, or create
+src/components/UserProfile.tsx  the profile page at /profile: view, and edit nickname and avatar
 src/components/ProfileBadge.tsx nickname and avatar in the header, linking to /profile
 src/components/Avatar.tsx       round picture with a local placeholder fallback
-src/App.tsx               the shell: the page frame, the nav and the routes
+src/components/SignInScreen.tsx Clerk's <SignIn>, shown instead of the app when signed out
+src/App.tsx               the shell: the sign-in gate, the page frame, the nav and the routes
 ```
 
 Imports only ever point down that list: a component calls a hook, a hook calls `api/`, and **nothing but a hook calls `api/` directly**. `App.tsx` holds no state at all, so a second screen means a new component and a route rather than changes to the first one.
 
-Routing is React Router (`react-router`, declarative mode). `main.tsx` wraps `App` in a `BrowserRouter`, and `App.tsx` holds the `<Routes>` and the nav, so `App.test.tsx` can render `App` inside a `MemoryRouter` at any path. Vite's dev server already falls back to `index.html` for unknown paths, so deep links like `/info` work in dev. A static host serving `dist/` would need the same fallback.
+Routing is React Router (`react-router`, declarative mode). `main.tsx` wraps `App` in `ClerkProvider` and a `BrowserRouter`, and `App.tsx` holds the `<Routes>` and the nav, so `App.test.tsx` can render `App` inside a `MemoryRouter` at any path. Vite's dev server already falls back to `index.html` for unknown paths, so deep links like `/info` work in dev. A static host serving `dist/` would need the same fallback.
 
-Because there is no login, the app acts as `DEFAULT_USER_ID = 1` (`src/currentUser.ts`), the seeded `dani`: `Wants.tsx` attributes new wants to that user, and `App.tsx` passes it to `ProfileBadge` and `UserProfile`. The badge and the profile page each call `useUserProfile`, so they hold separate copies. A nickname changed on `/profile` reaches the header only on the next load. That is the point to reach for TanStack Query.
+**Login is Clerk** (`@clerk/react` v6, Clerk Core 3; the old `@clerk/clerk-react` is deprecated). Core 3 replaced `<SignedIn>`/`<SignedOut>` with `<Show when="signed-in">`/`<Show when="signed-out">`, which `App.tsx` uses to gate the whole shell, so nothing fetches before there is a session. `api/http.ts` gets the token from Clerk's standalone `getToken()` export, which works outside React, so the transport needs no hook and the layering rule holds. `main.tsx` throws if `VITE_CLERK_PUBLISHABLE_KEY` is unset (`frontend/.env.local`, git-ignored by `*.local`; template in `.env.example`). The publishable key is public by design; **the Clerk secret key is used nowhere and must never be added**.
+
+Which user the app acts as comes from the token, so no component passes a user id. The signed-in user is the one piece of state shared across screens:
+- `App.tsx` wraps the signed-in shell in **`MeProvider`**, which makes a single `GET /me` and exposes it through React context.
+- `ProfileBadge`, `Wants` and `UserProfile` all read it with `useMe()`, so they share one copy. A nickname saved on `/profile` (`PUT /me`, whose response replaces the copy) shows in the header immediately.
+- `useMe()` throws outside the provider, so a component test that renders one of them wraps it in `<MeProvider>`.
+- `useMe.ts` holds the context and hook, and `MeProvider.tsx` the component. They are split because oxlint wants component files to export components only.
+
+`Wants.tsx` shows edit controls only on rows where `want.userId` matches `me.id`, but that is cosmetic: the API returns 403 regardless. It names each owner by `want.username`; nicknames appear only in the header and on the profile page.
+
+If more state needs sharing, reach for TanStack Query rather than more providers.
 
 Avatars use `Avatar.tsx`, which shows `src/assets/avatar-placeholder.svg` when `s3Url` is null and also when the URL fails to load. Vite inlines that SVG as a `data:` URI, so tests compare `src` against the imported asset rather than matching a file name.
 
-Component tests are Vitest with React Testing Library, in a jsdom environment configured in the `test` block of `vite.config.ts` (which is why that file imports `defineConfig` from `vitest/config` rather than `vite`). Tests sit beside the component as `<Name>.test.tsx` and stub the `api/` module with `vi.mock`, never `fetch`, so they survive a change of transport and need no server.
+Component tests are Vitest with React Testing Library, in a jsdom environment configured in the `test` block of `vite.config.ts` (which is why that file imports `defineConfig` from `vitest/config` rather than `vite`). Tests sit beside the component as `<Name>.test.tsx` and stub the `api/` module with `vi.mock`, never `fetch`, so they survive a change of transport and need no server. Because `api/` is stubbed, they never reach Clerk's `getToken`. Anything that renders `App` must also `vi.mock('@clerk/react')`, as `App.test.tsx` does with a `vi.hoisted` signed-in flag, because the real `<Show>` and `<SignIn>` load Clerk from the network.
 
 Two things about the setup are easy to trip over:
 
@@ -92,29 +102,65 @@ State is local `useState`. All server data is refetched after each mutation, whi
 
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
 
-- `models` — JPA entities and enums (`Want`, `User`, `UserProfile`, `Category`)
-- `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`, `UserProfileRepository`)
-- `services` — business logic, the only layer controllers talk to (`WantService`, `UserProfileService`)
-- `controllers` — HTTP endpoints (`WantController`, `UserProfileController`)
-- `security` — `OriginSecretFilter`, which rejects requests that did not come through CloudFront
+- `models` — JPA entities and enums (`Want`, `User`, `Category`)
+- `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`)
+- `services` — business logic, the only layer controllers talk to (`WantService`, `UserService`), plus `ClerkIdentity`
+- `controllers` — HTTP endpoints (`WantController`, `UserController`), plus `Identities`, which turns a token into a `ClerkIdentity`
+- `dto` — request bodies with their Bean Validation constraints (`WantRequest`, `UpdateMeRequest`) and response shapes (`WantResponse`). New request and response records go here, not in `controllers`.
+- `security` — `SecurityConfig` (the filter chain), `ClerkJwtConfig` (the `JwtDecoder`), `AuthorizedPartyValidator` (the `azp` check) and `OriginSecretFilter`, which rejects requests that did not come through CloudFront
+
+**Authentication.** Every route needs a Clerk session token in `Authorization: Bearer`, except `/actuator/health` and `/error`. Spring Security runs as an OAuth2 resource server. It is stateless, and CSRF is off, because nothing reads cookies.
+- `ClerkJwtConfig` builds the decoder from `${app.auth.issuer}/.well-known/jwks.json`. Startup makes no network call; keys are fetched on the first token. It validates expiry, the issuer (an exact match, so no trailing slash), and `azp` against `app.auth.authorized-parties`.
+- Both properties are strict `${CLERK_ISSUER}` / `${CLERK_AUTHORIZED_PARTIES}` placeholders in `application.properties`. `application-local.properties` sets both: the parties to `http://localhost:5173`, and the issuer to the Clerk development instance `https://enabled-walleye-998.clerk.accounts.dev` (not secret, and the host the frontend's `pk_test_` key encodes), so `mvn spring-boot:run` needs no variables. A blank issuer, or an empty party list, throws at startup: **fail closed**, like the origin check.
+- `OriginSecretFilter` carries `@Order(SecurityProperties.DEFAULT_FILTER_ORDER - 1)`, so it runs before Spring Security and a request that skipped CloudFront gets 403 before its token is looked at.
+- The backend never uses Clerk's secret key. Don't add it.
+
+**Identity.** A controller takes `@AuthenticationPrincipal Jwt jwt` and passes `Identities.of(jwt)` to the service. That is a `ClerkIdentity(clerkId, username)` built from the token's `sub` and its custom `username` claim, so services never see Spring Security types. **Never accept a user id from the request body or the query string.**
+- `UserService.current(who)` finds the user by `users.clerk_id`. If there is none, it creates one through `insertIfAbsent`, a native `INSERT ... ON CONFLICT DO NOTHING`, always with the Clerk id as the username, which cannot clash. Two simultaneous first requests are safe that way. Catching a unique-constraint exception instead would mark the surrounding transaction rollback-only.
+- It then syncs from the claims onto the managed `User`, so an unchanged user is never written:
+  - `username`: on creation, and whenever the name changes in Clerk. It skips the sync when the claim is missing or blank, or when the name belongs to another row here (`existsByUsernameAndIdNot`), such as the seeded `dani`.
+  - `email` and `lastSignInAt`: a missing claim never erases the stored value.
+- The claims exist only because the Clerk session token is customised (dashboard → **Sessions → Customize session token**):
+
+  ```json
+  {"username": "{{user.username}}", "email": "{{user.primary_email_address}}", "lastLogin": "{{user.last_sign_in_at}}"}
+  ```
+
+  Without them, everyone stays named by Clerk id, with no email.
+- `lastLogin` arrives as Unix seconds. Spring converts only the standard time claims to `Instant`, so `Identities.epochSeconds` does it for this one.
+- Renaming a claim in the dashboard means changing `Identities.of` as well. Ownership checks live in services: `WantService.requireOwned` gives 404 for an unknown want and 403 (`WantForbiddenException`) for someone else's. Wants whose owner has no `clerk_id`, such as the seeded `dani`'s, are therefore read-only.
 
 Controllers depend on services, never on repositories directly, and all dependencies are injected through constructors rather than fields, which keeps them explicit and testable without a container.
 
 Endpoints:
 
-- `GET /wants` — every want as JSON, narrowed by an optional `?category=` parameter. Spring converts that parameter to the `Category` enum by exact name, so `FOOD` works while `food` or an unknown value yields 400 before the controller runs.
-- `POST /wants` — creates one, taking `{"message", "category", "userId"}` and returning 201 with the saved want. `CreateWantRequest` carries the Bean Validation constraints, so a blank message, missing field or unknown category is a 400 before the service is reached; an unknown `userId` is a 404 via `UserNotFoundException`, which carries `@ResponseStatus` rather than needing an exception handler.
-- `/user/profiles` — full CRUD for profiles: `GET` (optionally `?userId=`, always a list), `GET /{id}`, `POST` (`CreateUserProfileRequest`: `userId`, `email`, `nickname`, optional `s3Url`), `PUT /{id}` (`UpdateUserProfileRequest`, the same fields without `userId`, because a profile never changes owner) and `DELETE /{id}`. A second profile for a user, or an email already in use, is a **409** via `UserProfileConflictException`. The service checks for these up front, so the client never sees a 500 from the database unique constraints. A blank `s3Url` is stored as null.
+- `GET /me` — the signed-in user, account and profile in one (`id`, `username`, `clerkId`, `email`, `lastSignInAt`, `nickname`, `s3Url`), created on first call.
+- `GET /wants` — every want, from every user, as `WantResponse` (`{id, message, category, userId, username}`), narrowed by an optional `?category=` parameter. Spring converts that parameter to the `Category` enum by exact name, so `FOOD` works while `food` or an unknown value yields 400 before the controller runs.
+- `POST /wants`, `PUT /wants/{id}`, `DELETE /wants/{id}` — `WantRequest` is `{"message", "category"}` with Bean Validation constraints, so a blank message or unknown category is a 400 before the service is reached. The owner is the token's user, and an unknown property such as a stale `userId` is ignored. Changing someone else's want is a 403 via `WantForbiddenException`, which carries `@ResponseStatus` rather than needing an exception handler.
+- `PUT /me` — replaces the two fields you edit yourself, taking `UpdateMeRequest` (`nickname` up to 100 characters, `s3Url` up to 1024, both optional). Blank or missing clears a field. There are no `username` or `email` fields: Clerk owns those, so an attempt to send them is ignored. **There is deliberately no route to another user's record.**
+- `GET /actuator/health` — the only unauthenticated route. Actuator exposes nothing else by default, and the health details stay hidden.
 
-`UserProfile` is a separate entity, one-to-one with `User` through a unique `user_id`, rather than columns on `users`. **Keep email off `User`**: every want embeds its user in JSON, so a field on `User` is published on every `GET /wants`. The association runs from profile to user only, and it is eager, for the same reasons as `Want.user` below.
+**`User` is the account and the profile in one row.** There used to be a separate `user_profiles` table, kept apart only so email stayed out of every want; V7 folded it in once wants stopped embedding the user.
+- Clerk-owned fields: `username`, `clerk_id`, `email`, `last_sign_in_at`, copied from the token by `UserService`.
+- User-edited fields: `nickname`, `s3_url`, both nullable. A new user simply has neither, so there is no "create profile" step.
+
+**`User` holds private data**, so it is serialized **only for its own user**, by `GET /me` and `PUT /me`. **Never return a `User`, or an entity that embeds one, for another user.**
+- Wants are returned as `WantResponse` (`id`, `message`, `category`, `userId`, `username`).
+- `WantControllerTest.neverExposesTheOwnersPrivateDetails` guards that.
+- Any new endpoint that lists other people's data needs its own response record copying only public fields.
 
 Each `Want` belongs to a `User` through a non-null `@ManyToOne` (`user_id`, a real foreign key). The association is deliberately unidirectional: a `User` has no `List<Want>`, which avoids the infinite recursion a bidirectional pair would cause during JSON serialization. Query wants by user through the repository rather than navigating from the user.
 
 `@ManyToOne` defaults to eager fetching, and that matters here because `spring.jpa.open-in-view=false` closes the persistence context before serialization — a lazy association would throw `LazyInitializationException` while Jackson writes the response. If this is ever made lazy for performance, the controller's query must fetch-join the user.
 
-Entities are serialized directly to JSON; there is no DTO layer, so `GET /wants` embeds the full user object in every want. If either entity gains a field that should not be exposed — a password hash on `User`, say — introduce a DTO rather than annotating around the problem.
+Responses are a mix. `WantController` maps every `Want` to `WantResponse` (a record in `dto`, built by `WantResponse.from`). `User` is still serialized as an entity by `/me`, which is safe only because it is always the caller's own row. When a field must stay hidden, add a response record rather than annotating the entity with `@JsonIgnore`.
 
-Tests use `@WebMvcTest` with MockMvc, which loads only the web slice — no datasource, so `mvn test` passes without a database running. Collaborators are replaced with `@MockitoBean` (Spring Boot 3.4+ replaced `@MockBean`). New controller tests should follow that pattern and name the controller under test in the annotation.
+Tests use `@WebMvcTest` with MockMvc, which loads only the web slice — no datasource, so `mvn test` passes without a database running. Collaborators are replaced with `@MockitoBean` (Spring Boot 3.4+ replaced `@MockBean`). New controller tests should follow that pattern and name the controller under test in the annotation. They also need:
+- `@Import(SecurityConfig.class)`. `@WebMvcTest` does not pick up `@Configuration` classes, and without it Boot's default chain would apply, with CSRF on.
+- `@MockitoBean JwtDecoder`, so `ClerkJwtConfig` and its `CLERK_ISSUER` placeholder are never needed.
+- `.with(jwt().jwt(t -> t.subject("user_...")))` on each authenticated request, plus a test that the route returns 401 without it.
+
+Service-level rules, such as ownership, are tested with plain Mockito (`WantServiceTest`), since the controller tests mock the services.
 
 ## Schema migrations
 
@@ -126,7 +172,7 @@ The project moved from MySQL to PostgreSQL once, and V1 and V3 were rewritten in
 
 SQL notes for this schema: ids are `BIGINT GENERATED BY DEFAULT AS IDENTITY`, which `GenerationType.IDENTITY` maps to. Enum-like columns such as `wants.category` are `VARCHAR` with a `CHECK` constraint, not native PostgreSQL enum types — `@Enumerated(EnumType.STRING)` is validated as a character column, and a native enum would fail `ddl-auto=validate`. PostGIS and `btree_gist` are available on the hosted database and in the local image; enable them with `CREATE EXTENSION IF NOT EXISTS` in the migration that first needs them.
 
-`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` is schema and stays.
+`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` created the profiles table that `V7__merge_user_profiles_into_users.sql` later moves onto `users` and drops. V3 and V4 stay, because they have been applied; deleting or editing them would break Flyway's checksums.
 
 Resetting from scratch — the only safe way to replay migrations, and it destroys all data:
 
@@ -166,7 +212,7 @@ Configuration files:
 
 `.github/workflows/docker-publish.yml` runs on every push to `master` and can be triggered manually from the Actions tab.
 - `test-api` runs `mvn test`.
-- `test-web` runs `npm ci`, `lint`, `test` and `build` in `frontend/` on Node 22, and uploads `dist/` as an artifact.
+- `test-web` runs `npm ci`, `lint`, `test` and `build` in `frontend/` on Node 22, and uploads `dist/` as an artifact. The build reads `vars.CLERK_PUBLISHABLE_KEY` into `VITE_CLERK_PUBLISHABLE_KEY`, and **fails** if it is empty, because a bundle without it is a blank page.
 - When both pass, two jobs run:
   - `publish-api` pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>`.
   - `deploy-web` downloads that same `dist/`, so the tested build is the deployed build, and syncs it to S3. It then invalidates `/index.html` and `/` in CloudFront.
@@ -182,7 +228,7 @@ Configuration files:
 - The script, run as root:
   - runs `docker compose pull app && up -d app`
   - sources `/opt/wants/.env`, so the health check can send `X-Origin-Secret` (the API rejects requests without it)
-  - polls `localhost:8080/wants` for up to 2 minutes, prunes old images on success, and on failure prints the last 60 log lines and exits 1, which fails the job
+  - polls `localhost:8080/actuator/health` (the one route that needs no Clerk token) for up to 2 minutes, prunes old images on success, and on failure prints the last 60 log lines and exits 1, which fails the job
   - must never use `set -x`, because of the secrets in `.env`
 - The job polls `ssm get-command-invocation` and prints the script's output.
 - `concurrency: deploy-api` serializes deploys.
@@ -238,6 +284,8 @@ The test job needs no database, because the tests are `@WebMvcTest` slices. A fu
 - **The boot script must never `set -x`:** it would print the password and the origin secret into `/var/log/cloud-init-output.log`.
 - **Certificate:** `ca.pem` is read from `terraform/` (git-ignored, `terraform/*.pem`), passed through `trimspace(file(...))` in the user data, written to `/opt/wants/ca.pem`, and mounted at `/certs/ca.pem`. A validation on `db_url` requires `sslrootcert=/certs/ca.pem` and rejects a laptop path by mistake.
 - **`.env` on the instance** quotes every value in single quotes, so Compose doesn't interpret the `&` in the JDBC URL.
+- **Clerk settings:** `var.clerk_issuer` (default: the project's development instance; validated: `https://`, no trailing slash) and `CLERK_AUTHORIZED_PARTIES = "https://${aws_cloudfront_distribution.site.domain_name}"` go into `.env` through the user data. The distribution depends only on `aws_eip.app`, never the instance, so this adds no cycle. Changing either replaces the instance.
+- **Rollout order for anything the app newly requires from `.env`:** `terraform apply` first, then merge. `deploy-api` only swaps the image; it never rewrites `.env`. An image that needs a variable the instance lacks fails to start, and the health check fails the job.
 - **Fixed address:** an Elastic IP is associated separately (`aws_eip_association`), so it survives instance replacement and can be added to Aiven's IP allowlist. `associate_public_ip_address` stays true, so the instance has outbound access before the association happens.
 - **What replaces the instance:** any change to the user data (image tag, certificate, URL, user), because `user_data_replace_on_change` is set. A password change only updates SSM, so the app needs a restart to pick it up. The container keeps the password it got at first boot in `/opt/wants/.env`, so restarting means rerunning the fetch-and-write steps, or replacing the instance.
 - **AWS account guardrail:** the account has a budget action (`Monthly-50-Max-Budget`) that attaches the deny policy `MyActualBudgetKillSwitchPayload` (`ec2:RunInstances`, `ec2:StartInstances`, `ecs:*`) to the `admin-worker` user at 100% of $50. If `apply` fails with `UnauthorizedOperation ... explicit deny ... MyActualBudgetKillSwitchPayload`, check the budget action's status before anything else. Its automatic reset has failed before (`RESET_FAILURE`), leaving the block on with no spend.

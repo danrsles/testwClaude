@@ -1,168 +1,139 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  createUserProfile,
-  deleteUserProfile,
-  listUserProfiles,
-  updateUserProfile,
-} from '../api/userProfiles'
+import { getMe, updateMe } from '../api/me'
 import placeholder from '../assets/avatar-placeholder.svg'
-import type { UserProfile as Profile } from '../types/userProfiles'
+import MeProvider from '../hooks/MeProvider'
+import type { User } from '../types/wants'
 import UserProfile from './UserProfile'
 
-// Stubbed at the api boundary, as in Wants.test.tsx: the component and its
-// hook are under test, the transport is not.
-vi.mock('../api/userProfiles', () => ({
-  listUserProfiles: vi.fn(),
-  createUserProfile: vi.fn(),
-  updateUserProfile: vi.fn(),
-  deleteUserProfile: vi.fn(),
+// Stubbed at the api boundary, as in Wants.test.tsx: the component and the
+// provider are under test, the transport is not.
+vi.mock('../api/me', () => ({
+  getMe: vi.fn(),
+  updateMe: vi.fn(),
 }))
 
-function profile(overrides: Partial<Profile> = {}): Profile {
+function me(overrides: Partial<User> = {}): User {
   return {
-    id: 7,
-    user: { id: 1, username: 'dani' },
+    id: 3,
+    username: 'dani2',
+    clerkId: 'user_dani',
     email: 'dani@example.com',
+    lastSignInAt: null,
     nickname: 'Dani',
     s3Url: null,
     ...overrides,
   }
 }
 
+function renderProfile() {
+  render(
+    <MeProvider>
+      <UserProfile />
+    </MeProvider>,
+  )
+}
+
 describe('UserProfile', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.restoreAllMocks()
-    vi.mocked(listUserProfiles).mockResolvedValue([profile()])
+    vi.mocked(getMe).mockResolvedValue(me())
   })
 
-  it('shows the profile the API returns, for the given user', async () => {
-    render(<UserProfile userId={1} />)
+  it('shows your nickname, email and username', async () => {
+    renderProfile()
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Dani' })).toBeInTheDocument()
     expect(screen.getByText('dani@example.com')).toBeInTheDocument()
-    expect(screen.getByText('@dani')).toBeInTheDocument()
-    expect(listUserProfiles).toHaveBeenCalledWith(1)
+    expect(screen.getByText('@dani2')).toBeInTheDocument()
+  })
+
+  it('falls back to the username, and suggests a nickname, when there is none', async () => {
+    vi.mocked(getMe).mockResolvedValue(me({ nickname: null }))
+    renderProfile()
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'dani2' })).toBeInTheDocument()
+    expect(screen.getByText(/Add a nickname/)).toBeInTheDocument()
   })
 
   it('shows the placeholder picture when there is no avatar URL', async () => {
-    render(<UserProfile userId={1} />)
+    renderProfile()
 
     const img = await screen.findByRole('img', { name: "Dani's profile picture" })
     expect(img).toHaveAttribute('src', placeholder)
   })
 
-  it('shows the avatar URL when the profile has one', async () => {
-    vi.mocked(listUserProfiles).mockResolvedValue([
-      profile({ s3Url: 'https://example.com/dani.png' }),
-    ])
-    render(<UserProfile userId={1} />)
+  it('shows the avatar URL when there is one', async () => {
+    vi.mocked(getMe).mockResolvedValue(me({ s3Url: 'https://example.com/dani.png' }))
+    renderProfile()
 
     const img = await screen.findByRole('img', { name: "Dani's profile picture" })
     expect(img).toHaveAttribute('src', 'https://example.com/dani.png')
   })
 
-  it('saves an edited profile and closes the form', async () => {
-    vi.mocked(updateUserProfile).mockResolvedValue(profile({ nickname: 'Dan' }))
-    render(<UserProfile userId={1} />)
+  it('saves the nickname and avatar and closes the form', async () => {
+    vi.mocked(updateMe).mockResolvedValue(me({ nickname: 'Dan', s3Url: 'https://example.com/d.png' }))
+    renderProfile()
     await screen.findByRole('heading', { name: 'Dani' })
 
     await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    const nickname = screen.getByLabelText('Nickname')
+    const nickname = screen.getByLabelText('Nickname (optional)')
     expect(nickname).toHaveValue('Dani')
     await userEvent.clear(nickname)
     await userEvent.type(nickname, 'Dan')
     await userEvent.type(screen.getByLabelText('Avatar URL (optional)'), 'https://example.com/d.png')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    expect(updateUserProfile).toHaveBeenCalledWith(7, {
-      email: 'dani@example.com',
-      nickname: 'Dan',
-      s3Url: 'https://example.com/d.png',
-    })
-    await waitFor(() => expect(screen.queryByLabelText('Nickname')).not.toBeInTheDocument())
+    expect(updateMe).toHaveBeenCalledWith({ nickname: 'Dan', s3Url: 'https://example.com/d.png' })
+    expect(await screen.findByRole('heading', { level: 2, name: 'Dan' })).toBeInTheDocument()
+  })
+
+  it('sends a blank nickname as null, to clear it', async () => {
+    vi.mocked(updateMe).mockResolvedValue(me({ nickname: null }))
+    renderProfile()
+    await screen.findByRole('heading', { name: 'Dani' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    await userEvent.clear(screen.getByLabelText('Nickname (optional)'))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(updateMe).toHaveBeenCalledWith({ nickname: null, s3Url: null })
+  })
+
+  it('has no field for the email or username, which come from Clerk', async () => {
+    renderProfile()
+    await screen.findByRole('heading', { name: 'Dani' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+
+    expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument()
   })
 
   it('cancels an edit without calling the API', async () => {
-    render(<UserProfile userId={1} />)
+    renderProfile()
     await screen.findByRole('heading', { name: 'Dani' })
 
     await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
-    expect(screen.queryByLabelText('Nickname')).not.toBeInTheDocument()
-    expect(updateUserProfile).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('Nickname (optional)')).not.toBeInTheDocument()
+    expect(updateMe).not.toHaveBeenCalled()
   })
 
   it('keeps the typed text and shows the error when saving fails', async () => {
-    vi.mocked(updateUserProfile).mockRejectedValue(new Error('Email taken@example.com is already in use'))
-    render(<UserProfile userId={1} />)
+    vi.mocked(updateMe).mockRejectedValue(new Error('size must be between 0 and 100'))
+    renderProfile()
     await screen.findByRole('heading', { name: 'Dani' })
 
     await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    const email = screen.getByLabelText('Email')
-    await userEvent.clear(email)
-    await userEvent.type(email, 'taken@example.com')
+    const nickname = screen.getByLabelText('Nickname (optional)')
+    await userEvent.clear(nickname)
+    await userEvent.type(nickname, 'Dan')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('is already in use')
-    expect(screen.getByLabelText('Email')).toHaveValue('taken@example.com')
-  })
-
-  it('deletes the profile after confirmation', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    vi.mocked(deleteUserProfile).mockResolvedValue(undefined)
-    render(<UserProfile userId={1} />)
-    await screen.findByRole('heading', { name: 'Dani' })
-
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
-
-    expect(window.confirm).toHaveBeenCalled()
-    expect(deleteUserProfile).toHaveBeenCalledWith(7)
-  })
-
-  it('does not delete when the confirmation is dismissed', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
-    render(<UserProfile userId={1} />)
-    await screen.findByRole('heading', { name: 'Dani' })
-
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
-
-    expect(deleteUserProfile).not.toHaveBeenCalled()
-  })
-
-  it('offers a create form when the user has no profile, and creates one', async () => {
-    vi.mocked(listUserProfiles).mockResolvedValue([])
-    vi.mocked(createUserProfile).mockResolvedValue(profile())
-    render(<UserProfile userId={1} />)
-
-    expect(await screen.findByRole('heading', { name: 'Create your profile' })).toBeInTheDocument()
-    await userEvent.type(screen.getByLabelText('Nickname'), 'Dani')
-    await userEvent.type(screen.getByLabelText('Email'), 'dani@example.com')
-    await userEvent.click(screen.getByRole('button', { name: 'Create profile' }))
-
-    expect(createUserProfile).toHaveBeenCalledWith({
-      email: 'dani@example.com',
-      nickname: 'Dani',
-      s3Url: null,
-      userId: 1,
-    })
-  })
-
-  it('keeps the create form filled in when creating fails', async () => {
-    vi.mocked(listUserProfiles).mockResolvedValue([])
-    vi.mocked(createUserProfile).mockRejectedValue(new Error('No user with id 1'))
-    render(<UserProfile userId={1} />)
-    await screen.findByRole('heading', { name: 'Create your profile' })
-
-    await userEvent.type(screen.getByLabelText('Nickname'), 'Dani')
-    await userEvent.type(screen.getByLabelText('Email'), 'dani@example.com')
-    await userEvent.click(screen.getByRole('button', { name: 'Create profile' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('No user with id 1')
-    expect(screen.getByLabelText('Nickname')).toHaveValue('Dani')
-    expect(screen.getByLabelText('Email')).toHaveValue('dani@example.com')
+    expect(await screen.findByRole('alert')).toHaveTextContent('size must be between 0 and 100')
+    await waitFor(() => expect(screen.getByLabelText('Nickname (optional)')).toHaveValue('Dan'))
   })
 })
