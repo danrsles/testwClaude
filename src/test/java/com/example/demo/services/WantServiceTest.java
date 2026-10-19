@@ -1,5 +1,6 @@
 package com.example.demo.services;
 
+import java.util.List;
 import java.util.Optional;
 
 import com.example.demo.models.Category;
@@ -9,6 +10,7 @@ import com.example.demo.repositories.WantRepository;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -18,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 
 /** The ownership rule, which the controller tests mock away. */
@@ -94,5 +97,28 @@ class WantServiceTest {
 
         assertThatThrownBy(() -> wantService.delete(99L, DANI))
                 .isInstanceOf(WantNotFoundException.class);
+    }
+
+    @Test
+    void bringsTheSignedInUserUpToDateBeforeListing() {
+        // So a picture just changed in Clerk is in this response, not only the next one.
+        given(wantRepository.findAll()).willReturn(List.of());
+
+        wantService.findAll(DANI);
+
+        InOrder order = inOrder(userService, wantRepository);
+        order.verify(userService).current(DANI);
+        order.verify(wantRepository).findAll();
+    }
+
+    @Test
+    void bringsTheSignedInUserUpToDateBeforeFiltering() {
+        given(wantRepository.findByCategory(Category.FOOD)).willReturn(List.of());
+
+        wantService.findByCategory(Category.FOOD, DANI);
+
+        InOrder order = inOrder(userService, wantRepository);
+        order.verify(userService).current(DANI);
+        order.verify(wantRepository).findByCategory(Category.FOOD);
     }
 }

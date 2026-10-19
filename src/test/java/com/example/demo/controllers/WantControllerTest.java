@@ -67,7 +67,7 @@ class WantControllerTest {
         User user = new User("dani", DANI_ID);
         ReflectionTestUtils.setField(user, "id", 1L);
         user.setEmail("dani@example.com");
-        user.setNickname("Dani");
+        user.setImageUrl("https://img.clerk.com/dani.jpg");
         user.setLastSignInAt(Instant.parse("2026-10-16T12:00:00Z"));
         return user;
     }
@@ -78,7 +78,7 @@ class WantControllerTest {
 
     @Test
     void returnsAllWants() throws Exception {
-        given(wantService.findAll()).willReturn(List.of(
+        given(wantService.findAll(DANI)).willReturn(List.of(
                 new Want("Ramen downtown", Category.FOOD, dani),
                 new Want("Finish Elden Ring", Category.GAME, dani)));
 
@@ -88,14 +88,16 @@ class WantControllerTest {
                 .andExpect(jsonPath("$[0].message").value("Ramen downtown"))
                 .andExpect(jsonPath("$[0].category").value("FOOD"))
                 .andExpect(jsonPath("$[0].userId").value(1))
-                .andExpect(jsonPath("$[0].username").value("dani"));
+                .andExpect(jsonPath("$[0].username").value("dani"))
+                // The owner's Clerk picture, public by design, for showing beside the want.
+                .andExpect(jsonPath("$[0].imageUrl").value("https://img.clerk.com/dani.jpg"));
     }
 
     @Test
     void neverExposesTheOwnersPrivateDetails() throws Exception {
         // Every signed-in user can list every want, so the owner must appear
-        // only as userId and username, never as the User entity.
-        given(wantService.findAll()).willReturn(List.of(new Want("Ramen downtown", Category.FOOD, dani)));
+        // only as userId, username and picture, never as the User entity.
+        given(wantService.findAll(DANI)).willReturn(List.of(new Want("Ramen downtown", Category.FOOD, dani)));
 
         mockMvc.perform(get("/wants").with(signedInAsDani()))
                 .andExpect(status().isOk())
@@ -103,7 +105,6 @@ class WantControllerTest {
                 .andExpect(jsonPath("$[0].email").doesNotExist())
                 .andExpect(jsonPath("$[0].lastSignInAt").doesNotExist())
                 .andExpect(jsonPath("$[0].clerkId").doesNotExist())
-                .andExpect(jsonPath("$[0].nickname").doesNotExist())
                 .andExpect(content().string(not(containsString("dani@example.com"))));
     }
 
@@ -112,12 +113,12 @@ class WantControllerTest {
         mockMvc.perform(get("/wants"))
                 .andExpect(status().isUnauthorized());
 
-        then(wantService).should(never()).findAll();
+        then(wantService).should(never()).findAll(any());
     }
 
     @Test
     void filtersByCategory() throws Exception {
-        given(wantService.findByCategory(any(Category.class)))
+        given(wantService.findByCategory(eq(Category.TRIP), eq(DANI)))
                 .willReturn(List.of(new Want("Weekend in Montreal", Category.TRIP, dani)));
 
         mockMvc.perform(get("/wants").param("category", "TRIP").with(signedInAsDani()))

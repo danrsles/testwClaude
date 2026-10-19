@@ -54,13 +54,12 @@ src/api/wants.ts                transport: one function per endpoint, no state
 src/api/me.ts                   the same for /me (GET and PUT)
 src/hooks/useWants.ts           server state: the cached list and its mutations
 src/hooks/MeProvider.tsx        server state: the signed-in user, loaded once and shared
+src/hooks/useOnPictureChange.ts calls back when you change your picture in Clerk, after minting a fresh token
 src/hooks/useMe.ts              the context MeProvider fills, and the hook that reads it
 src/types/wants.ts              the shapes the API returns and accepts
 src/components/Wants.tsx        the whole wants screen, including its own UI state
 src/components/Info.tsx         a static about page, routed at /info
-src/components/UserProfile.tsx  the profile page at /profile: view, and edit nickname and avatar
-src/components/ProfileBadge.tsx nickname and avatar in the header, linking to /profile
-src/components/Avatar.tsx       round picture with a local placeholder fallback
+src/components/Avatar.tsx       round picture with a local placeholder fallback, beside each want
 src/components/SignInScreen.tsx Clerk's <SignIn>, shown instead of the app when signed out
 src/App.tsx               the shell: the sign-in gate, the page frame, the nav and the routes
 ```
@@ -73,15 +72,21 @@ Routing is React Router (`react-router`, declarative mode). `main.tsx` wraps `Ap
 
 Which user the app acts as comes from the token, so no component passes a user id. The signed-in user is the one piece of state shared across screens:
 - `App.tsx` wraps the signed-in shell in **`MeProvider`**, which makes a single `GET /me` and exposes it through React context.
-- `ProfileBadge`, `Wants` and `UserProfile` all read it with `useMe()`, so they share one copy. A nickname saved on `/profile` (`PUT /me`, whose response replaces the copy) shows in the header immediately.
+- `Wants` reads it with `useMe()`; any later screen shares the same copy. It is read-only: everything about a user comes from Clerk and changes in Clerk's account menu (`<UserButton />`), so there is no profile page and no `PUT /me`.
 - `useMe()` throws outside the provider, so a component test that renders one of them wraps it in `<MeProvider>`.
 - `useMe.ts` holds the context and hook, and `MeProvider.tsx` the component. They are split because oxlint wants component files to export components only.
 
-`Wants.tsx` shows edit controls only on rows where `want.userId` matches `me.id`, but that is cosmetic: the API returns 403 regardless. It names each owner by `want.username`; nicknames appear only in the header and on the profile page.
+`Wants.tsx` shows edit controls only on rows where `want.userId` matches `me.id`, but that is cosmetic: the API returns 403 regardless. It names each owner by `want.username`, beside `<Avatar src={want.imageUrl} alt="" size={24} />`. The alt is empty because the username already names the person.
+
+**Picture changes show at once.** The API learns your picture only from the session token, which Clerk otherwise reissues about once a minute. `Wants` therefore calls `useOnPictureChange(refresh)`:
+- The hook watches `useUser().user.imageUrl`. Clerk updates it in the page as soon as you change your picture in its menu.
+- On a change, it calls Clerk's standalone `getToken({ skipCache: true })`, which mints and caches a new token, then calls `refresh`. The reload's `GET /wants` carries that token, and the API syncs your row before listing (see `WantService.findAll`).
+- The first value, Clerk finishing loading the user, is not treated as a change.
+- `Wants.test.tsx` mocks `@clerk/react` (`useUser`, `getToken`) with a `vi.hoisted` user whose `imageUrl` a test changes between `rerender`s. `App.test.tsx`'s Clerk mock includes both too.
 
 If more state needs sharing, reach for TanStack Query rather than more providers.
 
-Avatars use `Avatar.tsx`, which shows `src/assets/avatar-placeholder.svg` when `s3Url` is null and also when the URL fails to load. Vite inlines that SVG as a `data:` URI, so tests compare `src` against the imported asset rather than matching a file name.
+`Avatar.tsx` shows `src/assets/avatar-placeholder.svg` when its `src` is null and also when the URL fails to load. Vite inlines that SVG as a `data:` URI, so tests compare `src` against the imported asset rather than matching a file name.
 
 Component tests are Vitest with React Testing Library, in a jsdom environment configured in the `test` block of `vite.config.ts` (which is why that file imports `defineConfig` from `vitest/config` rather than `vite`). Tests sit beside the component as `<Name>.test.tsx` and stub the `api/` module with `vi.mock`, never `fetch`, so they survive a change of transport and need no server. Because `api/` is stubbed, they never reach Clerk's `getToken`. Anything that renders `App` must also `vi.mock('@clerk/react')`, as `App.test.tsx` does with a `vi.hoisted` signed-in flag, because the real `<Show>` and `<SignIn>` load Clerk from the network.
 
@@ -106,7 +111,7 @@ A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` 
 - `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`)
 - `services` — business logic, the only layer controllers talk to (`WantService`, `UserService`), plus `ClerkIdentity`
 - `controllers` — HTTP endpoints (`WantController`, `UserController`), plus `Identities`, which turns a token into a `ClerkIdentity`
-- `dto` — request bodies with their Bean Validation constraints (`WantRequest`, `UpdateMeRequest`) and response shapes (`WantResponse`). New request and response records go here, not in `controllers`.
+- `dto` — request bodies with their Bean Validation constraints (`WantRequest`) and response shapes (`WantResponse`). New request and response records go here, not in `controllers`.
 - `security` — `SecurityConfig` (the filter chain), `ClerkJwtConfig` (the `JwtDecoder`), `AuthorizedPartyValidator` (the `azp` check) and `OriginSecretFilter`, which rejects requests that did not come through CloudFront
 
 **Authentication.** Every route needs a Clerk session token in `Authorization: Bearer`, except `/actuator/health` and `/error`. Spring Security runs as an OAuth2 resource server. It is stateless, and CSRF is off, because nothing reads cookies.
@@ -120,13 +125,15 @@ A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` 
 - It then syncs from the claims onto the managed `User`, so an unchanged user is never written:
   - `username`: on creation, and whenever the name changes in Clerk. It skips the sync when the claim is missing or blank, or when the name belongs to another row here (`existsByUsernameAndIdNot`), such as the seeded `dani`.
   - `email` and `lastSignInAt`: a missing claim never erases the stored value.
+  - `imageUrl`, the Clerk profile picture: the same rule. Removing a photo in Clerk doesn't empty the claim; Clerk sends its silhouette's URL instead, which is copied like any change.
 - The claims exist only because the Clerk session token is customised (dashboard → **Sessions → Customize session token**):
 
   ```json
-  {"username": "{{user.username}}", "email": "{{user.primary_email_address}}", "lastLogin": "{{user.last_sign_in_at}}"}
+  {"username": "{{user.username}}", "email": "{{user.primary_email_address}}", "lastLogin": "{{user.last_sign_in_at}}", "imageUrl": "{{user.image_url}}"}
   ```
 
-  Without them, everyone stays named by Clerk id, with no email.
+  Without them, everyone stays named by Clerk id, with no email and no picture.
+- Clerk always fills `image_url`, with a generated silhouette when the user has no photo. `Identities.pictureOf` uses it as it is (blank counts as none), so the app matches Clerk's own account button; there is deliberately no `hasImage` claim. So `imageUrl` is null only for users Clerk has told us nothing about, such as the seeded `dani`, and `Avatar.tsx` shows the placeholder for them. Session tokens are reissued about every minute, so a picture changed in Clerk reaches the API within that.
 - `lastLogin` arrives as Unix seconds. Spring converts only the standard time claims to `Instant`, so `Identities.epochSeconds` does it for this one.
 - Renaming a claim in the dashboard means changing `Identities.of` as well. Ownership checks live in services: `WantService.requireOwned` gives 404 for an unknown want and 403 (`WantForbiddenException`) for someone else's. Wants whose owner has no `clerk_id`, such as the seeded `dani`'s, are therefore read-only.
 
@@ -134,18 +141,17 @@ Controllers depend on services, never on repositories directly, and all dependen
 
 Endpoints:
 
-- `GET /me` — the signed-in user, account and profile in one (`id`, `username`, `clerkId`, `email`, `lastSignInAt`, `nickname`, `s3Url`), created on first call.
-- `GET /wants` — every want, from every user, as `WantResponse` (`{id, message, category, userId, username}`), narrowed by an optional `?category=` parameter. Spring converts that parameter to the `Category` enum by exact name, so `FOOD` works while `food` or an unknown value yields 400 before the controller runs.
+- `GET /me` — the signed-in user (`id`, `username`, `clerkId`, `email`, `lastSignInAt`, `imageUrl`), created on first call. Read-only: every field comes from Clerk, so there is no `PUT /me` (it answers 405). **There is deliberately no route to another user's record.**
+- `GET /wants` — every want, from every user, as `WantResponse` (`{id, message, category, userId, username, imageUrl}`). It first runs `UserService.current` for the caller in the same transaction, so a picture or username just changed in Clerk shows beside their own wants in that response rather than racing the page's parallel `GET /me`. The list can be narrowed by an optional `?category=` parameter. Spring converts that parameter to the `Category` enum by exact name, so `FOOD` works while `food` or an unknown value yields 400 before the controller runs.
 - `POST /wants`, `PUT /wants/{id}`, `DELETE /wants/{id}` — `WantRequest` is `{"message", "category"}` with Bean Validation constraints, so a blank message or unknown category is a 400 before the service is reached. The owner is the token's user, and an unknown property such as a stale `userId` is ignored. Changing someone else's want is a 403 via `WantForbiddenException`, which carries `@ResponseStatus` rather than needing an exception handler.
-- `PUT /me` — replaces the two fields you edit yourself, taking `UpdateMeRequest` (`nickname` up to 100 characters, `s3Url` up to 1024, both optional). Blank or missing clears a field. There are no `username` or `email` fields: Clerk owns those, so an attempt to send them is ignored. **There is deliberately no route to another user's record.**
 - `GET /actuator/health` — the only unauthenticated route. Actuator exposes nothing else by default, and the health details stay hidden.
 
-**`User` is the account and the profile in one row.** There used to be a separate `user_profiles` table, kept apart only so email stayed out of every want; V7 folded it in once wants stopped embedding the user.
-- Clerk-owned fields: `username`, `clerk_id`, `email`, `last_sign_in_at`, copied from the token by `UserService`.
-- User-edited fields: `nickname`, `s3_url`, both nullable. A new user simply has neither, so there is no "create profile" step.
+**Every field of `User` comes from Clerk:** `username`, `clerk_id`, `email`, `last_sign_in_at` and `image_url`, all copied from the token by `UserService`. Nothing about a user is edited through this API.
+- There used to be a separate `user_profiles` table, kept apart only so email stayed out of every want; V7 folded it into `users`.
+- V8 then dropped the user-edited `nickname` and turned `s3_url` into `image_url`, when the profile page was removed in favour of Clerk's account menu.
 
-**`User` holds private data**, so it is serialized **only for its own user**, by `GET /me` and `PUT /me`. **Never return a `User`, or an entity that embeds one, for another user.**
-- Wants are returned as `WantResponse` (`id`, `message`, `category`, `userId`, `username`).
+**`User` holds private data**, so it is serialized **only for its own user**, by `GET /me`. **Never return a `User`, or an entity that embeds one, for another user.**
+- Wants are returned as `WantResponse` (`id`, `message`, `category`, `userId`, `username`, `imageUrl`). The picture URL is public by design.
 - `WantControllerTest.neverExposesTheOwnersPrivateDetails` guards that.
 - Any new endpoint that lists other people's data needs its own response record copying only public fields.
 
@@ -172,7 +178,7 @@ The project moved from MySQL to PostgreSQL once, and V1 and V3 were rewritten in
 
 SQL notes for this schema: ids are `BIGINT GENERATED BY DEFAULT AS IDENTITY`, which `GenerationType.IDENTITY` maps to. Enum-like columns such as `wants.category` are `VARCHAR` with a `CHECK` constraint, not native PostgreSQL enum types — `@Enumerated(EnumType.STRING)` is validated as a character column, and a native enum would fail `ddl-auto=validate`. PostGIS and `btree_gist` are available on the hosted database and in the local image; enable them with `CREATE EXTENSION IF NOT EXISTS` in the migration that first needs them.
 
-`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` created the profiles table that `V7__merge_user_profiles_into_users.sql` later moves onto `users` and drops. V3 and V4 stay, because they have been applied; deleting or editing them would break Flyway's checksums.
+`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` created the profiles table that `V7__merge_user_profiles_into_users.sql` later moves onto `users` and drops. `V8__clerk_picture_drop_nickname.sql` drops `users.nickname` and renames `s3_url` to `image_url`, emptied so each user's next request fills in their Clerk picture. V3 and V4 stay, because they have been applied; deleting or editing them would break Flyway's checksums.
 
 Resetting from scratch — the only safe way to replay migrations, and it destroys all data:
 

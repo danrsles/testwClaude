@@ -90,9 +90,9 @@ npm run dev             # http://localhost:5173
 
 The dev server proxies `/api/*` to port 8080, so the browser stays on one origin and the backend needs no CORS configuration.
 
-A signed-out visitor sees only Clerk's sign-in form, which also offers sign-up. Once signed in, the app has three screens, linked from the nav at the top: the wants list at `/`, an about page at `/info`, and your profile at `/profile`. The header shows your nickname and picture, linking to the profile, and Clerk's account menu, which handles account settings and sign-out.
-- **Profile:** set a nickname and an avatar URL. Until you do, others see your username and a placeholder picture.
-- **Username and email:** these come from your Clerk account and change in its account menu.
+A signed-out visitor sees only Clerk's sign-in form, which also offers sign-up. Once signed in, the app has two screens, linked from the nav at the top: the wants list at `/` and an about page at `/info`. The header also holds Clerk's account menu, the only account control: it changes your profile picture, username and email, and signs you out.
+- **Wants** show each owner's username and Clerk profile picture: their photo, or Clerk's silhouette if they haven't set one.
+- **Everything about you comes from Clerk.** The app has no profile page of its own and nothing to edit about yourself.
 
 ## Login
 
@@ -108,17 +108,20 @@ Browser ── signs in through Clerk's widget ──► Clerk
 ```
 
 - **Users are created on first sign-in.** The first request carrying a new Clerk user's token creates a row in `users` with `clerk_id` set to the token's `sub`. There is no sign-up endpoint in this API, because Clerk's widget does sign-up.
-- **Clerk owns the username, email and last sign-in.** The Clerk session token is customised to carry them, under **Sessions → Customize session token** in the Clerk dashboard:
+- **Clerk owns the username, email, last sign-in and profile picture.** The Clerk session token is customised to carry them, under **Sessions → Customize session token** in the Clerk dashboard:
 
   ```json
   {
     "username": "{{user.username}}",
     "email": "{{user.primary_email_address}}",
-    "lastLogin": "{{user.last_sign_in_at}}"
+    "lastLogin": "{{user.last_sign_in_at}}",
+    "imageUrl": "{{user.image_url}}"
   }
   ```
 
-  The backend copies them onto the user's row (`users.username`, `users.email`, `users.last_sign_in_at`) whenever they change, so a rename in Clerk's account menu shows up on the next page load.
+  The backend copies them onto the user's row (`users.username`, `users.email`, `users.last_sign_in_at`, `users.image_url`) whenever they change. A change made in Clerk's account menu while the app is open shows straight away: the wants screen notices it, gets a fresh session token and reloads. Otherwise it reaches the API with the next session token, which Clerk issues about once a minute.
+  - Clerk always sends an `image_url`: your photo, or a generated silhouette if you haven't set one. The app shows it as it is, so it matches Clerk's account button.
+  - Like the others, a missing `imageUrl` claim never erases a stored picture. Removing your photo in Clerk still shows up, because Clerk then sends its silhouette's URL instead.
   - Without a Clerk username, or without the claim, the username is the Clerk id.
   - If the name is already taken in our table, for example by the seeded `dani`, the user keeps their current one rather than getting an error.
   - A missing email or sign-in claim never erases a stored value.
@@ -134,21 +137,16 @@ All bodies are JSON. **Every route needs `Authorization: Bearer <Clerk session t
 
 To call the API by hand, sign in to the app, run `await Clerk.session.getToken()` in the browser console, and copy the result. It expires in about a minute.
 
-### You: account and profile
+### You
 
-Your account and profile live in one record. `username` and `email` come from Clerk, and `nickname` and `s3Url` (your avatar) are yours to set. You can only ever reach your own; there is no route to anyone else's.
+Every field of your record comes from Clerk, so `/me` is read-only: you change these in Clerk's account menu. You can only ever reach your own; there is no route to anyone else's.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/me` | — | `200` you: `id`, `username`, `clerkId`, `email`, `lastSignInAt`, `nickname`, `s3Url`; created on first call | — |
-| `PUT` | `/me` | `{nickname?, s3Url?}` | `200` you, updated | `400` nickname over 100 or URL over 1024 characters |
-
-`PUT /me` is a full replacement of the two fields: a blank or missing one is cleared. Sending `username` or `email` does nothing, because they change in Clerk's account menu.
+| `GET` | `/me` | — | `200` you: `id`, `username`, `clerkId`, `email`, `lastSignInAt`, `imageUrl`; created on first call | — |
 
 ```bash
-curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"nickname":"Dani","s3Url":null}' \
-  localhost:8080/me
+curl -H "Authorization: Bearer $TOKEN" localhost:8080/me
 ```
 
 ### Wants
@@ -157,7 +155,7 @@ Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/wants` | — | `200` everyone's wants, each `{id, message, category, userId, username}` | `400` unknown `?category=` |
+| `GET` | `/wants` | — | `200` everyone's wants, each `{id, message, category, userId, username, imageUrl}` | `400` unknown `?category=` |
 | `GET` | `/wants?category=FOOD` | — | `200` filtered list | `400` unknown or lowercase value |
 | `POST` | `/wants` | `{message, category}` | `201` created want, owned by you | `400` invalid body |
 | `PUT` | `/wants/{id}` | `{message, category}` | `200` updated want | `400` invalid body, `403` not yours, `404` unknown want |
@@ -182,7 +180,7 @@ src/main/java/com/example/demo/
   repositories/  Spring Data interfaces
   services/      business logic and the exceptions that map to HTTP status
   controllers/   HTTP endpoints
-  dto/           request bodies and response shapes (WantRequest, UpdateMeRequest, WantResponse)
+  dto/           request bodies and response shapes (WantRequest, WantResponse)
   security/      SecurityConfig (who may call what), ClerkJwtConfig (how a token is checked),
                  AuthorizedPartyValidator (the azp check), OriginSecretFilter (CloudFront only)
 src/main/resources/db/migration/   Flyway migrations
@@ -190,9 +188,9 @@ frontend/src/
   api/           transport, one function per endpoint, no state; http.ts attaches the Clerk token
   hooks/         server state: useWants, and MeProvider/useMe, which load you once and share you
   types/         shapes mirroring the API
-  components/    the screens (Wants.tsx at /, Info.tsx at /info, UserProfile.tsx at /profile),
-                 SignInScreen.tsx for signed-out visitors, ProfileBadge.tsx in the header
-                 and the shared Avatar.tsx
+  components/    the screens (Wants.tsx at /, Info.tsx at /info),
+                 SignInScreen.tsx for signed-out visitors, and Avatar.tsx, the round
+                 picture beside each want
   App.tsx        the shell: the sign-in gate, nav and routes (ClerkProvider and
                  BrowserRouter are in main.tsx)
 terraform/       single-instance AWS deployment
@@ -238,7 +236,7 @@ To replay migrations from scratch, which destroys all data:
 docker compose down -v && docker compose up -d
 ```
 
-`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. V3 and V4 stay even though their table is gone, because applied migrations must never change.
+`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. `V8__clerk_picture_drop_nickname.sql` drops `nickname`, renames `s3_url` to `image_url` and empties it, once the profile page went and the picture became Clerk's. V3 and V4 stay even though their table is gone, because applied migrations must never change.
 
 If you delete a migration that hasn't run yet and replace it with another of the same version, run `mvn clean` first. Otherwise the old file's compiled copy in `target/classes` stays behind, and Flyway refuses to start with *"Found more than one migration with version"*.
 
@@ -316,7 +314,7 @@ Browser ──HTTPS──► CloudFront (https://<id>.cloudfront.net)
 
 Two CloudFront Functions in `terraform/functions/` do what a web server would otherwise do:
 - `strip-api-prefix.js` turns `/api/wants` into `/wants`, the same rewrite as the Vite dev proxy.
-- `spa-fallback.js` serves `index.html` for any path without a file extension, such as `/profile`, so client-side routes survive a refresh.
+- `spa-fallback.js` serves `index.html` for any path without a file extension, such as `/info`, so client-side routes survive a refresh.
 
 Approximate cost: the API server is ~$13 a month (instance, Elastic IP, disk). S3 and CloudFront are effectively free at this size, within CloudFront's always-free 1 TB and 10 million requests a month.
 
@@ -375,8 +373,8 @@ These are deliberate omissions, not oversights:
 - **Clerk runs as a development instance.** A Clerk production instance requires a domain you own, with DNS records Clerk can verify, and the site is still on `*.cloudfront.net`. A development instance works there, but shows a "Development mode" badge and has Clerk's development user limits. Moving to production means a custom domain, an ACM certificate in us-east-1, a production Clerk instance, and new `pk_live_` / issuer values.
 - **Usernames are optional in Clerk.** Unless usernames are required under **Configure → User & authentication**, a user who signs up with Google alone has none, and shows as their Clerk id (`user_2abc...`) until they set one in the account menu.
 - **No roles.** Every signed-in user has the same rights; there is no admin who can moderate other people's wants.
-- **No avatar uploads.** `s3Url` is a plain URL field until S3 is set up.
-- **Only wants have a response type.** `GET /wants` returns `WantResponse`, which names the owner only by `userId` and `username`. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users needs its own response type.
+- **Pictures live in Clerk.** The app stores only each picture's URL, so moving off Clerk would mean moving everyone's picture too. Other people see a changed picture the next time they load the list; nothing in the app updates live.
+- **Only wants have a response type.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `imageUrl`. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users needs its own response type.
 - **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext, including the CloudFront origin secret. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed

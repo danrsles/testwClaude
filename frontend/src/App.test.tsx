@@ -16,6 +16,8 @@ vi.mock('@clerk/react', () => ({
     (when === 'signed-in') === auth.signedIn ? children : null,
   SignIn: () => <div>Clerk sign-in form</div>,
   UserButton: () => <button>Account</button>,
+  useUser: () => ({ user: { imageUrl: 'https://img.clerk.com/dani.jpg' } }),
+  getToken: vi.fn(),
 }))
 
 // Wants and the profile load on mount; stub the transport so routing and the
@@ -34,10 +36,8 @@ vi.mock('./api/me', () => ({
     clerkId: 'user_dani',
     email: 'dani@example.com',
     lastSignInAt: null,
-    nickname: 'Dani',
-    s3Url: null,
+    imageUrl: null,
   }),
-  updateMe: vi.fn(),
 }))
 
 function renderAt(path: string) {
@@ -55,7 +55,7 @@ describe('App sign-in gate', () => {
 
   it('shows only the sign-in form when signed out, and calls no API', () => {
     auth.signedIn = false
-    renderAt('/profile')
+    renderAt('/')
 
     expect(screen.getByText('Clerk sign-in form')).toBeInTheDocument()
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
@@ -88,28 +88,6 @@ describe('App routing', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'About Wants' })).toBeInTheDocument()
   })
 
-  it('shows the profile page at /profile', async () => {
-    renderAt('/profile')
-
-    expect(screen.getByRole('heading', { level: 1, name: 'Profile' })).toBeInTheDocument()
-    expect(await screen.findByRole('heading', { level: 2, name: 'Dani' })).toBeInTheDocument()
-  })
-
-  it("shows the user's nickname and picture in the header of the main page", async () => {
-    renderAt('/')
-
-    const badge = await screen.findByRole('link', { name: 'Dani' })
-    expect(within(badge).getByRole('presentation')).toHaveAttribute('src')
-  })
-
-  it('goes to the profile page from the header badge', async () => {
-    renderAt('/')
-
-    await userEvent.click(await screen.findByRole('link', { name: 'Dani' }))
-
-    expect(screen.getByRole('heading', { level: 1, name: 'Profile' })).toBeInTheDocument()
-  })
-
   it('navigates between screens from the nav', async () => {
     renderAt('/')
     const nav = screen.getByRole('navigation', { name: 'Main' })
@@ -117,10 +95,15 @@ describe('App routing', () => {
     await userEvent.click(within(nav).getByRole('link', { name: 'Info' }))
     expect(screen.getByRole('heading', { level: 1, name: 'About Wants' })).toBeInTheDocument()
 
-    await userEvent.click(within(nav).getByRole('link', { name: 'Profile' }))
-    expect(screen.getByRole('heading', { level: 1, name: 'Profile' })).toBeInTheDocument()
-
     await userEvent.click(within(nav).getByRole('link', { name: 'Wants' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Wants' })).toBeInTheDocument()
+  })
+
+  it('has no profile page: Clerk\'s account menu is the only account control', () => {
+    renderAt('/')
+    const nav = screen.getByRole('navigation', { name: 'Main' })
+
+    expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Wants', 'Info'])
+    expect(screen.queryByRole('link', { name: /profile/i })).not.toBeInTheDocument()
   })
 })

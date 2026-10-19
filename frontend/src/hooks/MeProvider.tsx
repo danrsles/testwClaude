@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { getMe, updateMe } from '../api/me'
-import type { UpdateMeRequest, User } from '../types/wants'
+import { getMe } from '../api/me'
+import type { User } from '../types/wants'
 import { MeContext } from './useMe'
 
 function messageOf(e: unknown): string {
@@ -35,19 +35,7 @@ export default function MeProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // PUT /me returns the saved user, so there is nothing to refetch.
-  const update = useCallback(async (fields: UpdateMeRequest) => {
-    try {
-      setMe(await updateMe(fields))
-      setError(null)
-      return true
-    } catch (e) {
-      setError(messageOf(e))
-      return false
-    }
-  }, [])
-
-  const state = useMemo(() => ({ me, loading, error, update }), [me, loading, error, update])
+  const state = useMemo(() => ({ me, loading, error }), [me, loading, error])
 
   return <MeContext value={state}>{children}</MeContext>
 }
