@@ -10,9 +10,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Every signed-in user sees every want, but only its owner may change or
- * delete it. The owner is always the signed-in user, identified by the Clerk
- * id from the token, never an id sent in the request.
+ * Each signed-in user sees their own wants and those of the people they
+ * follow, but only a want's owner may change or delete it. The owner is
+ * always the signed-in user, identified by the Clerk id from the token, never
+ * an id sent in the request.
  */
 @Service
 public class WantService {
@@ -26,7 +27,8 @@ public class WantService {
     }
 
     /**
-     * Every want. The signed-in user is brought up to date from their token
+     * The signed-in user's feed: their own wants and those of everyone they
+     * follow. The signed-in user is brought up to date from their token
      * first, in the same transaction, so a picture or username just changed in
      * Clerk shows beside their own wants in this very response. Otherwise it
      * would depend on GET /me, which the page sends at the same time, happening
@@ -34,15 +36,13 @@ public class WantService {
      */
     @Transactional
     public List<Want> findAll(ClerkIdentity who) {
-        userService.current(who);
-        return wantRepository.findAll();
+        return wantRepository.findFeed(userService.current(who).getId());
     }
 
     /** As findAll, narrowed to one category. */
     @Transactional
     public List<Want> findByCategory(Category category, ClerkIdentity who) {
-        userService.current(who);
-        return wantRepository.findByCategory(category);
+        return wantRepository.findFeedByCategory(userService.current(who).getId(), category);
     }
 
     @Transactional
