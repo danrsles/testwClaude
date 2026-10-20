@@ -12,7 +12,7 @@ export default function People() {
   const [query, setQuery] = useState('')
   // What the last follow or unfollow did, until the search changes.
   const [notice, setNotice] = useState<string | null>(null)
-  const { people, shownFor, loading, error, pendingId, failed, toggleFollow } = usePeople(query)
+  const { people, shownFor, loading, error, pending, failed, toggleFollow } = usePeople(query)
   // Headings and counts describe the rows on screen, which lag the box while
   // a search is in flight.
   const searching = shownFor !== null && shownFor !== ''
@@ -91,7 +91,7 @@ export default function People() {
           className={`flex flex-col gap-2 transition-opacity motion-reduce:transition-none ${loading ? 'opacity-60' : ''}`}
         >
           {people.map((person) => {
-            const pending = pendingId === person.id
+            const busy = pending.has(person.id)
             return (
               <li
                 key={person.id}
@@ -106,8 +106,8 @@ export default function People() {
                   runs: a disabled button drops focus to the top of the page.
                 */}
                 <button
-                  onClick={() => !pending && toggle(person)}
-                  aria-disabled={pending}
+                  onClick={() => !busy && toggle(person)}
+                  aria-disabled={busy}
                   aria-label={`${person.following ? 'Unfollow' : 'Follow'} ${person.username}`}
                   className={`min-w-20 px-3 py-1.5 text-sm ${
                     // A neutral hover, so Unfollow never shows Follow's green.

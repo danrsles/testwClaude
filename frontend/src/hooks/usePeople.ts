@@ -22,8 +22,8 @@ export interface UsePeople {
   loading: boolean
   /** Why the last load failed, if it did. */
   error: string | null
-  /** The person whose follow or unfollow is in flight, if any. */
-  pendingId: number | null
+  /** The people whose follow or unfollow is in flight. */
+  pending: ReadonlySet<number>
   /** The last follow or unfollow that failed, to show beside that person. */
   failed: { id: number; message: string } | null
   /** Follows or unfollows; resolves true on success, false if the API rejected it. */
@@ -34,7 +34,7 @@ export interface UsePeople {
  * Owns the people screen's server state. With an empty query it lists who you
  * follow; otherwise it searches by username, waiting for typing to pause.
  *
- * A follow or unfollow flips that person's flag in place rather than
+ * A follow or unfollow updates that person's flag in place rather than
  * reloading, so someone just unfollowed stays in "You follow" until the next
  * load instead of vanishing from under the pointer.
  */
@@ -42,7 +42,9 @@ export function usePeople(query: string): UsePeople {
   const [people, setPeople] = useState<Person[] | null>(null)
   const [shownFor, setShownFor] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [pendingId, setPendingId] = useState<number | null>(null)
+  // A set rather than one id: following someone while another request is
+  // still running must not unblock the first person's button.
+  const [pending, setPending] = useState<ReadonlySet<number>>(new Set())
   const [failed, setFailed] = useState<UsePeople['failed']>(null)
 
   // As in useWants: only the newest load may write to state, so a slow
@@ -78,21 +80,26 @@ export function usePeople(query: string): UsePeople {
   }, [text])
 
   const toggleFollow = useCallback(async (person: Person) => {
-    setPendingId(person.id)
+    setPending((ids) => new Set(ids).add(person.id))
     try {
       await (person.following ? unfollow(person.id) : follow(person.id))
-      setPeople((all) =>
-        all && all.map((p) => (p.id === person.id ? { ...p, following: !p.following } : p)),
-      )
+      // Set what this request did rather than flipping what is on screen, so
+      // two requests that both followed cannot flip it back.
+      const following = !person.following
+      setPeople((all) => all && all.map((p) => (p.id === person.id ? { ...p, following } : p)))
       setFailed(null)
       return true
     } catch (e) {
       setFailed({ id: person.id, message: messageOf(e) })
       return false
     } finally {
-      setPendingId(null)
+      setPending((ids) => {
+        const rest = new Set(ids)
+        rest.delete(person.id)
+        return rest
+      })
     }
   }, [])
 
-  return { people, shownFor, loading, error, pendingId, failed, toggleFollow }
+  return { people, shownFor, loading, error, pending, failed, toggleFollow }
 }

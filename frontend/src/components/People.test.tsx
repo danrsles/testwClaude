@@ -140,6 +140,35 @@ describe('People', () => {
     expect(button).toHaveFocus()
   })
 
+  it('keeps each button blocked until its own request answers', async () => {
+    // Each follow waits until the test lets it finish.
+    const finish = new Map<number, () => void>()
+    vi.mocked(follow).mockImplementation(
+      (id) => new Promise((resolve) => finish.set(id, () => resolve(undefined))),
+    )
+    vi.mocked(searchPeople).mockResolvedValue([person(4, 'alex'), person(3, 'sam')])
+    render(<People />)
+    await userEvent.type(screen.getByLabelText('Search by username'), 'a')
+    const alex = await screen.findByRole('button', { name: 'Follow alex' })
+    const sam = screen.getByRole('button', { name: 'Follow sam' })
+
+    await userEvent.click(alex)
+    await userEvent.click(sam)
+    // Following sam must not unblock alex, so a second press sends nothing.
+    expect(alex).toHaveAttribute('aria-disabled', 'true')
+    await userEvent.click(alex)
+    expect(follow).toHaveBeenCalledTimes(2)
+
+    // sam answering first leaves alex blocked.
+    finish.get(3)!()
+    await waitFor(() => expect(sam).toHaveAccessibleName('Unfollow sam'))
+    expect(alex).toHaveAttribute('aria-disabled', 'true')
+
+    finish.get(4)!()
+    await waitFor(() => expect(alex).toHaveAccessibleName('Unfollow alex'))
+    expect(alex).toHaveAttribute('aria-disabled', 'false')
+  })
+
   it('drops the earlier rows when a search fails', async () => {
     vi.mocked(searchPeople).mockRejectedValue(new Error('Search failed'))
     render(<People />)
