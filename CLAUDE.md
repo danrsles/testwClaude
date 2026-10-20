@@ -109,6 +109,8 @@ State is local `useState`. All server data is refetched after each mutation, whi
 
 ## Architecture
 
+**Planned, not built:** signups on wants with a capacity, and notifications for follows and signups. The design is in `docs/design/wants-signups-and-notifications.md`. Everything below describes the code as it is; move facts here as each step of that plan lands.
+
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
 
 - `models` — JPA entities and enums (`Want`, `User`, `Follow`, `Category`)
