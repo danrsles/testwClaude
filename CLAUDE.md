@@ -52,12 +52,16 @@ The dev server proxies `/api/*` to `http://localhost:8080`, stripping the prefix
 src/api/http.ts                 `fail`, plus `authFetch`, which attaches the Clerk session token
 src/api/wants.ts                transport: one function per endpoint, no state
 src/api/me.ts                   the same for /me (GET and PUT)
+src/api/people.ts               the same for /users?q= and /follows
 src/hooks/useWants.ts           server state: the cached list and its mutations
+src/hooks/usePeople.ts          server state: who you follow, or search results, and follow/unfollow
 src/hooks/MeProvider.tsx        server state: the signed-in user, loaded once and shared
 src/hooks/useOnPictureChange.ts calls back when you change your picture in Clerk, after minting a fresh token
 src/hooks/useMe.ts              the context MeProvider fills, and the hook that reads it
 src/types/wants.ts              the shapes the API returns and accepts
+src/types/people.ts             Person, a search result or someone you follow
 src/components/Wants.tsx        the whole wants screen, including its own UI state
+src/components/People.tsx       search users by name and follow or unfollow them, routed at /people
 src/components/Info.tsx         a static about page, routed at /info
 src/components/Avatar.tsx       round picture with a local placeholder fallback, beside each want
 src/components/SignInScreen.tsx Clerk's <SignIn>, shown instead of the app when signed out
@@ -99,7 +103,7 @@ Two things about the setup are easy to trip over:
 
 The `ui-ux-reviewer` subagent (`.claude/agents/ui-ux-reviewer.md`) reviews a component in a real browser through the Playwright MCP server: it screenshots desktop and mobile, light and dark, walks the page by keyboard, and reports visual, UX and accessibility findings with file:line fixes. It never edits code, and it is told not to submit, edit or delete wants, because the dev server talks to the real database. Screenshots land in `.playwright-mcp/`, which is git-ignored.
 
-Styling is Tailwind CSS v4, wired through the `@tailwindcss/vite` plugin. v4 has **no `tailwind.config.js`** — everything is declared in CSS. `src/index.css` holds the category colours (an `@theme` block, used as `bg-food`, `bg-movie` and so on) and the shared `field` and `btn` classes (`@utility` blocks, which is why there is no styles constants module). Neither utility sets padding — callers size themselves, so two utilities never fight over the same property. Dark mode uses the `dark:` variant, which follows `prefers-color-scheme` by default.
+Styling is Tailwind CSS v4, wired through the `@tailwindcss/vite` plugin. v4 has **no `tailwind.config.js`** — everything is declared in CSS. `src/index.css` holds the category colours (an `@theme` block, used as `bg-food`, `bg-movie` and so on) and the shared `field`, `btn` and `btn-primary` classes (`@utility` blocks, which is why there is no styles constants module). `btn-primary` is the green main action (Add, Follow). `btn` and `btn-primary` style `aria-disabled` like `disabled`, for buttons that must keep focus while blocked, as on People. No utility sets padding — callers size themselves, so two utilities never fight over the same property. Dark mode uses the `dark:` variant, which follows `prefers-color-scheme` by default.
 
 State is local `useState`. All server data is refetched after each mutation, which is fine at this size; if the UI grows past one screen, reach for TanStack Query (server cache) before reaching for Redux (shared client state).
 
@@ -144,8 +148,9 @@ Endpoints:
 - `GET /me` — the signed-in user (`id`, `username`, `clerkId`, `email`, `lastSignInAt`, `imageUrl`), created on first call. Read-only: every field comes from Clerk, so there is no `PUT /me` (it answers 405). **There is deliberately no route to another user's record.**
 - `GET /wants` — **your feed**: your own wants plus those of everyone you follow, never anyone else's, as `WantResponse` (`{id, message, category, userId, username, imageUrl}`), ordered by want id. `WantRepository.findFeed` / `findFeedByCategory` are JPQL with a `Follow` subquery; Spring Data parses them at startup, so a mistake there fails `mvn spring-boot:run` but not `mvn test`. It first runs `UserService.current` for the caller in the same transaction, so a picture or username just changed in Clerk shows beside their own wants in that response rather than racing the page's parallel `GET /me`. The list can be narrowed by an optional `?category=` parameter. Spring converts that parameter to the `Category` enum by exact name, so `FOOD` works while `food` or an unknown value yields 400 before the controller runs.
 - `POST /wants`, `PUT /wants/{id}`, `DELETE /wants/{id}` — `WantRequest` is `{"message", "category"}` with Bean Validation constraints, so a blank message or unknown category is a 400 before the service is reached. The owner is the token's user, and an unknown property such as a stale `userId` is ignored. Changing someone else's want is a 403 via `WantForbiddenException`, which carries `@ResponseStatus` rather than needing an exception handler.
-- `PUT /follows/{userId}`, `DELETE /follows/{userId}` — follow or unfollow, both 204 and idempotent. The follower is the token's user. Following yourself is a 400 (`CannotFollowYourselfException`), an unknown user a 404 (`UserNotFoundException`). Following again is a no-op through `FollowRepository.followIfAbsent`, a native `INSERT ... ON CONFLICT DO NOTHING`, for the same rollback-only reason as `insertIfAbsent`. **There is no follow UI and no user search yet**; follows are made with curl (see the README).
+- `PUT /follows/{userId}`, `DELETE /follows/{userId}` — follow or unfollow, both 204 and idempotent. The follower is the token's user. Following yourself is a 400 (`CannotFollowYourselfException`), an unknown user a 404 (`UserNotFoundException`). Following again is a no-op through `FollowRepository.followIfAbsent`, a native `INSERT ... ON CONFLICT DO NOTHING`, for the same rollback-only reason as `insertIfAbsent`. The **People** screen (`People.tsx`) is the UI for both.
 - `GET /follows` — the users you follow, as `UserSummary` (`{id, username, imageUrl}`).
+- `GET /users?q=` — people search (`PeopleController` → `FollowService.search`): up to 20 users whose username contains `q`, ignoring case, never the caller, as `PersonResult` (`{id, username, imageUrl, following}`). A blank or missing `q` returns `[]` rather than everyone. `following` comes from `FollowRepository.findFolloweeIds`, JPQL parsed at startup like the feed queries. This is the only way to reach another user, and only by public fields.
 - `GET /actuator/health` — the only unauthenticated route. Actuator exposes nothing else by default, and the health details stay hidden.
 
 **Every field of `User` comes from Clerk:** `username`, `clerk_id`, `email`, `last_sign_in_at` and `image_url`, all copied from the token by `UserService`. Nothing about a user is edited through this API.
@@ -155,7 +160,7 @@ Endpoints:
 **`User` holds private data**, so it is serialized **only for its own user**, by `GET /me`. **Never return a `User`, or an entity that embeds one, for another user.**
 - Wants are returned as `WantResponse` (`id`, `message`, `category`, `userId`, `username`, `imageUrl`). The picture URL is public by design.
 - `WantControllerTest.neverExposesTheOwnersPrivateDetails` guards that.
-- Any new endpoint that lists other people's data needs its own response record copying only public fields. `UserSummary` is that record for users (`GET /follows`), guarded by `FollowControllerTest.listsWhoYouFollowByPublicDetailsOnly`.
+- Any new endpoint that lists other people's data needs its own response record copying only public fields. `UserSummary` is that record for users (`GET /follows`), guarded by `FollowControllerTest.listsWhoYouFollowByPublicDetailsOnly`, and `PersonResult` the one for search (`GET /users`), guarded by `PeopleControllerTest`.
 
 Each `Want` belongs to a `User` through a non-null `@ManyToOne` (`user_id`, a real foreign key). The association is deliberately unidirectional: a `User` has no `List<Want>`, which avoids the infinite recursion a bidirectional pair would cause during JSON serialization. Query wants by user through the repository rather than navigating from the user.
 

@@ -22,6 +22,7 @@ const STACK = [
 export default function Info() {
   return (
     <>
+      <title>About · Wants</title>
       <h1 className="text-3xl font-semibold tracking-tight">About Wants</h1>
       <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">
         A shared list of things worth doing, eating, playing and visiting. Add a want, give it a

@@ -1,5 +1,6 @@
 package com.example.demo.repositories;
 
+import java.util.List;
 import java.util.Optional;
 
 import com.example.demo.models.User;
@@ -16,6 +17,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByClerkId(String clerkId);
 
     boolean existsByUsernameAndIdNot(String username, Long id);
+
+    /**
+     * People search: names containing the text, ignoring case, never the
+     * searcher. Spring Data escapes % and _ in Containing, so they match
+     * literally.
+     */
+    List<User> findTop20ByUsernameContainingIgnoreCaseAndIdNotOrderByUsername(String text, Long id);
 
     /**
      * Creates the user for a Clerk account unless it exists. ON CONFLICT makes

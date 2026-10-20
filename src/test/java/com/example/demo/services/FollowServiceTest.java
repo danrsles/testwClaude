@@ -1,6 +1,9 @@
 package com.example.demo.services;
 
 import java.util.List;
+import java.util.Set;
+
+import com.example.demo.dto.PersonResult;
 
 import com.example.demo.models.Follow;
 import com.example.demo.models.User;
@@ -17,6 +20,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -90,5 +94,24 @@ class FollowServiceTest {
         given(followRepository.findByFollowerIdOrderById(1L)).willReturn(List.of(new Follow(dani, alex)));
 
         assertThat(followService.following(DANI)).containsExactly(alex);
+    }
+
+    @Test
+    void searchMarksWhomYouFollowAndLeavesYouOut() {
+        User sal = withId(new User("sal"), 5L);
+        given(followRepository.findFolloweeIds(1L)).willReturn(Set.of(2L));
+        given(userRepository.findTop20ByUsernameContainingIgnoreCaseAndIdNotOrderByUsername("al", 1L))
+                .willReturn(List.of(alex, sal));
+
+        assertThat(followService.search("  al ", DANI)).containsExactly(
+                new PersonResult(2L, "alex", null, true),
+                new PersonResult(5L, "sal", null, false));
+    }
+
+    @Test
+    void aBlankSearchFindsNoOne() {
+        assertThat(followService.search("   ", DANI)).isEmpty();
+        then(userRepository).should(never())
+                .findTop20ByUsernameContainingIgnoreCaseAndIdNotOrderByUsername(any(), anyLong());
     }
 }

@@ -1,12 +1,14 @@
 import { Show, UserButton } from '@clerk/react'
 import { NavLink, Route, Routes } from 'react-router'
 import Info from './components/Info'
+import People from './components/People'
 import SignInScreen from './components/SignInScreen'
 import Wants from './components/Wants'
 import MeProvider from './hooks/MeProvider'
 
 const NAV = [
   { to: '/', label: 'Wants' },
+  { to: '/people', label: 'People' },
   { to: '/info', label: 'Info' },
 ]
 
@@ -54,6 +56,7 @@ export default function App() {
 
             <Routes>
               <Route path="/" element={<Wants />} />
+              <Route path="/people" element={<People />} />
               <Route path="/info" element={<Info />} />
             </Routes>
           </main>

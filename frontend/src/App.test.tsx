@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router'
@@ -27,6 +27,13 @@ vi.mock('./api/wants', () => ({
   createWant: vi.fn(),
   updateWant: vi.fn(),
   deleteWant: vi.fn(),
+}))
+
+vi.mock('./api/people', () => ({
+  searchPeople: vi.fn().mockResolvedValue([]),
+  listFollowing: vi.fn().mockResolvedValue([]),
+  follow: vi.fn(),
+  unfollow: vi.fn(),
 }))
 
 vi.mock('./api/me', () => ({
@@ -82,6 +89,20 @@ describe('App routing', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Wants' })).toBeInTheDocument()
   })
 
+  it('shows the people screen at /people', () => {
+    renderAt('/people')
+
+    expect(screen.getByRole('heading', { level: 1, name: 'People' })).toBeInTheDocument()
+  })
+
+  it('names each page in the browser tab', async () => {
+    renderAt('/people')
+    await waitFor(() => expect(document.title).toBe('People · Wants'))
+
+    await userEvent.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Info' }))
+    await waitFor(() => expect(document.title).toBe('About · Wants'))
+  })
+
   it('shows the info page at /info', () => {
     renderAt('/info')
 
@@ -103,7 +124,7 @@ describe('App routing', () => {
     renderAt('/')
     const nav = screen.getByRole('navigation', { name: 'Main' })
 
-    expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Wants', 'Info'])
+    expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Wants', 'People', 'Info'])
     expect(screen.queryByRole('link', { name: /profile/i })).not.toBeInTheDocument()
   })
 })
