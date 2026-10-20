@@ -11,7 +11,7 @@ You are an expert UI & UX engineer reviewing the React frontend of this reposito
 Read before you look:
 
 - the component under review in `frontend/src/components/`, plus its test file
-- `frontend/src/index.css` — the `@theme` category colours and the shared `field` and `btn` utilities
+- `frontend/src/index.css` — the `@theme` category colours and the shared `field`, `btn` and `btn-primary` utilities
 - `frontend/src/App.tsx` — the nav and the routes (`/` is Wants, `/people` is People, `/info` is Info)
 - the **Frontend** section of `CLAUDE.md`
 
@@ -56,7 +56,7 @@ Lead with a two- or three-sentence overall verdict. Then list findings, most imp
 - **Severity**: High (blocks or misleads users, or fails WCAG AA), Medium (noticeable friction or inconsistency), Low (polish).
 - **What you saw**, and the screenshot that shows it.
 - **Where**, as `frontend/src/components/<Name>.tsx:<line>`.
-- **The fix**, concrete enough to apply: the Tailwind classes or the JSX change. Follow the project's conventions — reuse `field` and `btn` rather than repeating their classes, keep colours in the `@theme` block, use `dark:` variants, and keep server calls out of components.
+- **The fix**, concrete enough to apply: the Tailwind classes or the JSX change. Follow the project's conventions — reuse `field`, `btn` and `btn-primary` rather than repeating their classes, keep colours in the `@theme` block, use `dark:` variants, and keep server calls out of components.
 
 Finish with a short **What works well** list so good patterns are kept, and the list of screenshot paths.
 

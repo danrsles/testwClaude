@@ -1,4 +1,5 @@
 ﻿import { useState } from 'react'
+import { Link } from 'react-router'
 import type { SubmitEvent } from 'react'
 import { useMe } from '../hooks/useMe'
 import { useOnPictureChange } from '../hooks/useOnPictureChange'
@@ -52,6 +53,7 @@ export default function Wants() {
 
   return (
     <>
+      <title>Wants</title>
       <h1 className="text-3xl font-semibold tracking-tight">Wants</h1>
       <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">
         Things worth doing, eating, playing and visiting.
@@ -80,7 +82,7 @@ export default function Wants() {
         <button
           type="submit"
           disabled={!message.trim()}
-          className="cursor-pointer rounded-lg bg-emerald-700 px-5 py-2 font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-primary px-5 py-2"
         >
           Add
         </button>
@@ -103,7 +105,9 @@ export default function Wants() {
       </nav>
 
       {error && (
-        <p className="mb-4 rounded-lg border border-red-600/50 bg-red-600/10 px-3 py-2.5 text-sm text-red-700 dark:text-red-400">
+        <p
+          role="alert"
+          className="mb-4 rounded-lg border border-red-600/50 bg-red-600/10 px-3 py-2.5 text-sm text-red-700 dark:text-red-400">
           {error}
         </p>
       )}
@@ -111,7 +115,13 @@ export default function Wants() {
       {loading ? (
         <p className="py-9 text-center text-stone-500 dark:text-stone-400">Loading...</p>
       ) : wants.length === 0 ? (
-        <p className="py-9 text-center text-stone-500 dark:text-stone-400">Nothing here yet.</p>
+        <p className="py-9 text-center text-stone-500 dark:text-stone-400">
+          Nothing here yet. Add a want above, or{' '}
+          <Link to="/people" className="text-emerald-700 underline dark:text-emerald-400">
+            find people to follow
+          </Link>
+          .
+        </p>
       ) : (
         <ul className="flex flex-col gap-2">
           {wants.map((want) => (

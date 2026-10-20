@@ -76,6 +76,25 @@ describe('People', () => {
     expect(await screen.findByRole('button', { name: 'Unfollow sam' })).toBeInTheDocument()
   })
 
+  it('says what a follow and an unfollow did, until the search changes', async () => {
+    vi.mocked(follow).mockResolvedValue(undefined)
+    vi.mocked(unfollow).mockResolvedValue(undefined)
+    render(<People />)
+    const box = screen.getByLabelText('Search by username')
+    await userEvent.type(box, 'sam')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Follow sam' }))
+    expect(await screen.findByText('Now following sam. Their wants are in your list.')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Unfollow sam' }))
+    expect(
+      await screen.findByText('Unfollowed sam. Their wants are no longer in your list.'),
+    ).toBeInTheDocument()
+
+    await userEvent.type(box, 'x')
+    expect(screen.queryByText(/Unfollowed sam/)).not.toBeInTheDocument()
+  })
+
   it('unfollows someone, keeping them listed so they can be followed again', async () => {
     vi.mocked(unfollow).mockResolvedValue(undefined)
     render(<People />)

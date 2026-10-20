@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router'
@@ -93,6 +93,14 @@ describe('App routing', () => {
     renderAt('/people')
 
     expect(screen.getByRole('heading', { level: 1, name: 'People' })).toBeInTheDocument()
+  })
+
+  it('names each page in the browser tab', async () => {
+    renderAt('/people')
+    await waitFor(() => expect(document.title).toBe('People · Wants'))
+
+    await userEvent.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Info' }))
+    await waitFor(() => expect(document.title).toBe('About · Wants'))
   })
 
   it('shows the info page at /info', () => {

@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getToken } from '@clerk/react'
 import { getMe } from '../api/me'
@@ -39,13 +40,20 @@ function want(id: number, message: string, category: Category = 'FOOD', owner = 
   return { id, message, category, userId: owner.id, username: owner.username, imageUrl: owner.imageUrl }
 }
 
-// Wants reads the signed-in user from useMe, so it renders inside the provider.
-function renderWants() {
-  return render(
-    <MeProvider>
-      <Wants />
-    </MeProvider>,
+// Wants reads the signed-in user from useMe, so it renders inside the
+// provider, and links to People, so inside a router.
+function WantsScreen() {
+  return (
+    <MemoryRouter>
+      <MeProvider>
+        <Wants />
+      </MeProvider>
+    </MemoryRouter>
   )
+}
+
+function renderWants() {
+  return render(<WantsScreen />)
 }
 
 describe('Wants', () => {
@@ -58,6 +66,13 @@ describe('Wants', () => {
       want(1, 'Ramen downtown'),
       want(2, 'Dune Part Two', 'MOVIE'),
     ])
+  })
+
+  it('points to People when the list is empty', async () => {
+    vi.mocked(listWants).mockResolvedValue([])
+    renderWants()
+
+    expect(await screen.findByRole('link', { name: 'find people to follow' })).toHaveAttribute('href', '/people')
   })
 
   it('shows the wants the API returns', async () => {
@@ -89,7 +104,7 @@ describe('Wants', () => {
     await userEvent.type(input, 'Tacos')
     await userEvent.click(screen.getByRole('button', { name: 'Add' }))
 
-    expect(await screen.findByText('message must not be blank')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('message must not be blank')
     expect(input).toHaveValue('Tacos')
   })
 
@@ -173,11 +188,7 @@ describe('Wants', () => {
     expect(listWants).toHaveBeenCalledTimes(1)
 
     clerk.user = { imageUrl: 'https://img.clerk.com/new.jpg' }
-    rerender(
-      <MeProvider>
-        <Wants />
-      </MeProvider>,
-    )
+    rerender(<WantsScreen />)
 
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
     expect(getToken).toHaveBeenCalledWith({ skipCache: true })
@@ -189,11 +200,7 @@ describe('Wants', () => {
     await screen.findByText('Ramen downtown')
 
     clerk.user = { imageUrl: 'https://img.clerk.com/old.jpg' }
-    rerender(
-      <MeProvider>
-        <Wants />
-      </MeProvider>,
-    )
+    rerender(<WantsScreen />)
 
     expect(getToken).not.toHaveBeenCalled()
     expect(listWants).toHaveBeenCalledTimes(1)

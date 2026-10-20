@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { usePeople } from '../hooks/usePeople'
+import type { Person } from '../types/people'
 import Avatar from './Avatar'
 
 /**
@@ -9,6 +10,8 @@ import Avatar from './Avatar'
  */
 export default function People() {
   const [query, setQuery] = useState('')
+  // What the last follow or unfollow did, until the search changes.
+  const [notice, setNotice] = useState<string | null>(null)
   const { people, shownFor, loading, error, pendingId, failed, toggleFollow } = usePeople(query)
   // Headings and counts describe the rows on screen, which lag the box while
   // a search is in flight.
@@ -18,8 +21,18 @@ export default function People() {
   const count =
     people === null ? '' : searching ? `${people.length} ${noun} found` : `You follow ${people.length} ${noun}`
 
+  async function toggle(person: Person) {
+    if (!(await toggleFollow(person))) return
+    setNotice(
+      person.following
+        ? `Unfollowed ${person.username}. Their wants are no longer in your list.`
+        : `Now following ${person.username}. Their wants are in your list.`,
+    )
+  }
+
   return (
     <>
+      <title>People · Wants</title>
       <h1 className="text-3xl font-semibold tracking-tight">People</h1>
       <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">
         Find people to follow. Their wants show up in your list.
@@ -28,7 +41,10 @@ export default function People() {
       <input
         type="search"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => {
+          setQuery(e.target.value)
+          setNotice(null)
+        }}
         placeholder="Search by username"
         aria-label="Search by username"
         className="field mb-5 w-full px-3 py-2"
@@ -41,6 +57,11 @@ export default function People() {
           {count}
         </p>
       </div>
+
+      {/* A live region of its own, so the count above is not replaced. */}
+      <p role="status" className="mb-3 text-sm text-emerald-700 empty:hidden dark:text-emerald-400">
+        {notice}
+      </p>
 
       {error && (
         <p
@@ -85,13 +106,12 @@ export default function People() {
                   runs: a disabled button drops focus to the top of the page.
                 */}
                 <button
-                  onClick={() => !pending && toggleFollow(person)}
+                  onClick={() => !pending && toggle(person)}
                   aria-disabled={pending}
                   aria-label={`${person.following ? 'Unfollow' : 'Follow'} ${person.username}`}
-                  className={`min-w-20 cursor-pointer rounded-lg border px-3 py-1.5 text-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${
-                    person.following
-                      ? 'border-stone-300 bg-white hover:border-stone-500 dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-500'
-                      : 'border-transparent bg-emerald-700 font-medium text-white hover:bg-emerald-800'
+                  className={`min-w-20 px-3 py-1.5 text-sm ${
+                    // A neutral hover, so Unfollow never shows Follow's green.
+                    person.following ? 'btn hover:border-stone-500' : 'btn-primary'
                   }`}
                 >
                   {person.following ? 'Unfollow' : 'Follow'}
