@@ -93,8 +93,57 @@ describe('People', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Follow sam' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('User 3 not found')
-    expect(screen.getByRole('button', { name: 'Follow sam' })).toBeEnabled()
+    // Shown in sam's own row, beside the button that failed.
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('User 3 not found')
+    expect(alert.closest('li')).toHaveTextContent('sam')
+    expect(screen.getByRole('button', { name: 'Follow sam' })).toHaveAttribute('aria-disabled', 'false')
+  })
+
+  it('keeps keyboard focus on the button through a follow', async () => {
+    let finish = () => {}
+    vi.mocked(follow).mockReturnValue(new Promise((resolve) => (finish = () => resolve(undefined))))
+    render(<People />)
+    await userEvent.type(screen.getByLabelText('Search by username'), 'sam')
+    const button = await screen.findByRole('button', { name: 'Follow sam' })
+
+    button.focus()
+    await userEvent.keyboard('{Enter}')
+
+    // Blocked but still focusable while the request runs, so a second press does nothing.
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    expect(button).toHaveFocus()
+    await userEvent.keyboard('{Enter}')
+    expect(follow).toHaveBeenCalledTimes(1)
+
+    finish()
+    await waitFor(() => expect(button).toHaveAccessibleName('Unfollow sam'))
+    expect(button).toHaveFocus()
+  })
+
+  it('drops the earlier rows when a search fails', async () => {
+    vi.mocked(searchPeople).mockRejectedValue(new Error('Search failed'))
+    render(<People />)
+    await screen.findByRole('button', { name: 'Unfollow alex' })
+
+    await userEvent.type(screen.getByLabelText('Search by username'), 'sam')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Search failed')
+    expect(screen.queryByRole('button', { name: 'Unfollow alex' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/No one matches/)).not.toBeInTheDocument()
+  })
+
+  it('keeps the earlier rows, marked busy, while the next search loads', async () => {
+    render(<People />)
+    await screen.findByRole('button', { name: 'Unfollow alex' })
+
+    await userEvent.type(screen.getByLabelText('Search by username'), 's')
+
+    // Still the follow list, labelled as such, until the results arrive.
+    expect(screen.getByRole('list')).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('heading', { level: 2, name: 'You follow' })).toBeInTheDocument()
+    await screen.findByRole('button', { name: 'Follow sam' })
+    expect(screen.getByRole('list')).toHaveAttribute('aria-busy', 'false')
   })
 
   it('says when no one matches', async () => {

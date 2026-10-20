@@ -9,11 +9,14 @@ import Avatar from './Avatar'
  */
 export default function People() {
   const [query, setQuery] = useState('')
-  const { people, loading, error, pendingId, toggleFollow } = usePeople(query)
-  const searching = query.trim() !== ''
+  const { people, shownFor, loading, error, pendingId, failed, toggleFollow } = usePeople(query)
+  // Headings and counts describe the rows on screen, which lag the box while
+  // a search is in flight.
+  const searching = shownFor !== null && shownFor !== ''
 
-  const noun = people.length === 1 ? 'person' : 'people'
-  const count = searching ? `${people.length} ${noun} found` : `You follow ${people.length} ${noun}`
+  const noun = people?.length === 1 ? 'person' : 'people'
+  const count =
+    people === null ? '' : searching ? `${people.length} ${noun} found` : `You follow ${people.length} ${noun}`
 
   return (
     <>
@@ -35,7 +38,7 @@ export default function People() {
         <h2 className="text-lg font-medium">{searching ? 'Results' : 'You follow'}</h2>
         {/* Announced to screen readers as results arrive. */}
         <p role="status" className="text-sm text-stone-500 dark:text-stone-400">
-          {loading ? '' : count}
+          {count}
         </p>
       </div>
 
@@ -48,45 +51,59 @@ export default function People() {
         </p>
       )}
 
-      {loading ? (
+      {people === null ? (
         <p className="py-9 text-center text-stone-500 dark:text-stone-400">Loading...</p>
       ) : people.length === 0 ? (
-        <p className="py-9 text-center text-stone-500 dark:text-stone-400">
-          {searching
-            ? `No one matches “${query.trim()}”.`
-            : "You don't follow anyone yet. Search for someone above."}
-        </p>
+        // The alert above already says why the list is empty.
+        !error && (
+          <p className="py-9 text-center text-stone-500 dark:text-stone-400">
+            {searching
+              ? `No one matches “${shownFor}”.`
+              : "You don't follow anyone yet. Search for someone above."}
+          </p>
+        )
       ) : (
-        <ul className="flex flex-col gap-2">
-          {people.map((person) => (
-            <li
-              key={person.id}
-              className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-3.5 py-3 dark:border-stone-800 dark:bg-stone-900"
-            >
-              {/* Decorative: the username beside it names the person. */}
-              <Avatar src={person.imageUrl} alt="" size={32} />
-              <span className="min-w-0 flex-1 truncate">{person.username}</span>
-              {person.following ? (
+        // Earlier rows stay, dimmed, while the next search loads, rather than
+        // blanking the list on every keystroke.
+        <ul
+          aria-busy={loading}
+          className={`flex flex-col gap-2 transition-opacity motion-reduce:transition-none ${loading ? 'opacity-60' : ''}`}
+        >
+          {people.map((person) => {
+            const pending = pendingId === person.id
+            return (
+              <li
+                key={person.id}
+                className="flex flex-wrap items-center gap-3 rounded-xl border border-stone-200 bg-white px-3.5 py-3 dark:border-stone-800 dark:bg-stone-900"
+              >
+                {/* Decorative: the username beside it names the person. */}
+                <Avatar src={person.imageUrl} alt="" size={32} />
+                <span className="min-w-0 flex-1 truncate">{person.username}</span>
+                {/*
+                  One button whose label swaps, so focus stays on it after a
+                  toggle. aria-disabled rather than disabled while the request
+                  runs: a disabled button drops focus to the top of the page.
+                */}
                 <button
-                  onClick={() => toggleFollow(person)}
-                  disabled={pendingId === person.id}
-                  aria-label={`Unfollow ${person.username}`}
-                  className="btn px-3 py-1.5 text-sm"
+                  onClick={() => !pending && toggleFollow(person)}
+                  aria-disabled={pending}
+                  aria-label={`${person.following ? 'Unfollow' : 'Follow'} ${person.username}`}
+                  className={`min-w-20 cursor-pointer rounded-lg border px-3 py-1.5 text-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${
+                    person.following
+                      ? 'border-stone-300 bg-white hover:border-stone-500 dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-500'
+                      : 'border-transparent bg-emerald-700 font-medium text-white hover:bg-emerald-800'
+                  }`}
                 >
-                  Unfollow
+                  {person.following ? 'Unfollow' : 'Follow'}
                 </button>
-              ) : (
-                <button
-                  onClick={() => toggleFollow(person)}
-                  disabled={pendingId === person.id}
-                  aria-label={`Follow ${person.username}`}
-                  className="cursor-pointer rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Follow
-                </button>
-              )}
-            </li>
-          ))}
+                {failed?.id === person.id && (
+                  <p role="alert" className="basis-full text-sm text-red-700 dark:text-red-400">
+                    {failed.message}
+                  </p>
+                )}
+              </li>
+            )
+          })}
         </ul>
       )}
     </>
