@@ -243,7 +243,9 @@ Configuration files:
 
 ## Continuous integration
 
-`.github/workflows/docker-publish.yml` runs on every push to `master` and can be triggered manually from the Actions tab.
+`.github/workflows/docker-publish.yml` runs on every push to `master`, on every pull request, and can be triggered manually from the Actions tab.
+- **On a pull request, or a manual run from another branch, only `test-api` and `test-web` run.** `publish-api`, `deploy-api` and `deploy-web` all carry `if: github.ref == 'refs/heads/master'`, so nothing unmerged is ever published as `latest` or deployed. Keep that guard on any new job that publishes or deploys. A PR runs the workflow file from its own branch.
+- On a pull request `test-web` still builds, but skips uploading `dist/`, since nothing deploys it.
 - `test-api` runs `mvn test`.
 - `test-web` runs `npm ci`, `lint`, `test` and `build` in `frontend/` on Node 22, and uploads `dist/` as an artifact. The build reads `vars.CLERK_PUBLISHABLE_KEY` into `VITE_CLERK_PUBLISHABLE_KEY`, and **fails** if it is empty, because a bundle without it is a blank page.
 - When both pass, two jobs run:
