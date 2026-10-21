@@ -248,6 +248,8 @@ For a design review, ask Claude Code to use the **`ui-ux-reviewer`** agent (for 
 
 For an architecture question, ask for the **`system-design-advisor`** agent (for example, "ask the system design advisor how signups should handle the last seat"). It reads `CLAUDE.md`, the design docs in `docs/design/` and the relevant code, then answers with a recommendation, the trade-offs, the failure modes, a sketch and the tests that would prove it, judged against this project's real limits: one API instance, a small connection pool, CloudFront, Clerk tokens and a small budget. It advises only and does not change code.
 
+Before launching to real users, ask for the **`legal-launch-advisor`** agent (for example, "run the legal launch advisor; users would be in the US and EU"). It reads what the app stores and where, then lists what a public launch would be missing: a privacy policy, account deletion, reporting and blocking for user content, processor agreements, age rules, app store requirements and so on, ranked by priority with the evidence in the code. It is not legal advice, and it says which points a lawyer should confirm.
+
 ## Database schema
 
 Flyway owns the schema; Hibernate runs with `ddl-auto=validate` and never alters it.
