@@ -26,7 +26,7 @@ The Vite dev server serves the app on http://localhost:5173 and proxies `/api/*`
 
 ## 3. Do not change real data
 
-The Wants screen talks to a real MySQL database. **Never submit the add form, save an edit, change a want's category, press Delete, or press Follow or Unfollow on People** unless the person who asked you explicitly allowed it. You may type into fields, open the edit row and cancel it, hover, focus and tab — anything that does not send a write to the API. For states you cannot reach safely (empty list, loading, failed save), read the code that renders them and review that instead, saying that you did.
+The Wants and People screens talk to a real PostgreSQL database. **Never submit the add form, save an edit, change a want's category, press Delete, or press Follow or Unfollow on People** unless the person who asked you explicitly allowed it. You may type into fields, open the edit row and cancel it, hover, focus and tab — anything that does not send a write to the API. For states you cannot reach safely (empty list, loading, failed save), read the code that renders them and review that instead, saying that you did.
 
 ## 4. Look at it in the browser
 

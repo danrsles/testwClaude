@@ -246,6 +246,8 @@ Component tests stub the `api/` module rather than `fetch`, so like the backend 
 
 For a design review, ask Claude Code to use the **`ui-ux-reviewer`** agent (for example, "have the ui-ux-reviewer look at the Wants screen"). With the dev server running, it opens the page in Playwright, screenshots it at desktop and mobile widths in light and dark mode, tabs through it by keyboard, and reports visual design, UX and accessibility issues with suggested fixes. It does not change code or data.
 
+For an architecture question, ask for the **`system-design-advisor`** agent (for example, "ask the system design advisor how signups should handle the last seat"). It reads `CLAUDE.md`, the design docs in `docs/design/` and the relevant code, then answers with a recommendation, the trade-offs, the failure modes, a sketch and the tests that would prove it, judged against this project's real limits: one API instance, a small connection pool, CloudFront, Clerk tokens and a small budget. It advises only and does not change code.
+
 ## Database schema
 
 Flyway owns the schema; Hibernate runs with `ddl-auto=validate` and never alters it.
