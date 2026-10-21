@@ -1,10 +1,14 @@
 name: Build, publish and deploy
 
-# Runs on every commit to master. workflow_dispatch allows a manual run
-# from the Actions tab, which is useful for testing this before merging.
+# Runs on every commit to master, which tests, publishes and deploys. On a
+# pull request only the two test jobs run, so a PR shows whether it passes
+# before it is merged; every publish and deploy job is limited to master.
+# workflow_dispatch allows a manual run from the Actions tab; from any other
+# branch it only tests too.
 on:
   push:
     branches: [master]
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -62,18 +66,22 @@ jobs:
           npm run build
 
       # The deploy job uploads exactly this tested build rather than building
-      # its own.
+      # its own. Nothing deploys a pull request, so its build is not kept.
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: site
           path: frontend/dist
           retention-days: 7
 
   # The API image, published only when both test jobs pass, so the deployed API
-  # and site always come from the same tested commit.
+  # and site always come from the same tested commit. Only from master: a run
+  # from a branch or a pull request would otherwise push unmerged code as
+  # latest.
   publish-api:
     name: Publish API image
     needs: [test-api, test-web]
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

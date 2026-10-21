@@ -291,13 +291,13 @@ If `DB_URL` is missing, startup fails with `'url' must start with "jdbc"`. That 
 
 ## Continuous integration
 
-`.github/workflows/docker-publish.yml` runs on every push to `master`, and can be triggered manually from the Actions tab.
+`.github/workflows/docker-publish.yml` runs on every push to `master`, on every pull request, and can be triggered manually from the Actions tab. A pull request runs only the two test jobs, so it shows a pass or fail before merging; publishing and deploying happen only from `master`.
 
 | Job | What it does |
 |---|---|
 | Test API | `mvn test` |
-| Test and build web | `npm ci`, `lint`, `test`, `build` on Node 22; keeps `dist/` as an artifact |
-| Publish API image | when both test jobs pass, pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>` |
+| Test and build web | `npm ci`, `lint`, `test`, `build` on Node 22; keeps `dist/` as an artifact, except on pull requests |
+| Publish API image | on `master` only, when both test jobs pass, pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>` |
 | Deploy API | after the image is published, tells the API server through SSM Run Command to pull it, restart, and pass a health check |
 | Deploy web | when both test jobs pass, uploads that tested `dist/` to S3 and refreshes CloudFront |
 
