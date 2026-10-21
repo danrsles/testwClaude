@@ -11,7 +11,7 @@ const CATEGORY_INFO: Record<Category, { swatch: string; description: string }> =
 }
 
 const STACK = [
-  { name: 'API', detail: 'Spring Boot 3 on Java 21, with MySQL and Flyway migrations.' },
+  { name: 'API', detail: 'Spring Boot 3 on Java 21, with PostgreSQL and Flyway migrations.' },
   { name: 'Frontend', detail: 'React and TypeScript, built with Vite and styled with Tailwind CSS.' },
 ]
 
