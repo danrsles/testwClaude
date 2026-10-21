@@ -25,10 +25,11 @@ jobs:
           java-version: '21'
           cache: maven
 
-      # No database service is needed: the tests are @WebMvcTest slices
-      # and never open a datasource.
+      # verify runs the unit tests (*Test, no database), then the database
+      # tests (*IT), which start PostgreSQL through Testcontainers. Docker is
+      # preinstalled on GitHub's Ubuntu runners, so no service is declared.
       - name: Run tests
-        run: mvn -B test
+        run: mvn -B verify
 
   test-web:
     name: Test and build web

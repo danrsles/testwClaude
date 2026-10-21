@@ -8,7 +8,9 @@ No Maven wrapper is checked in, so use a system `mvn` (3.9.x) with JDK 21.
 
 ```bash
 mvn spring-boot:run          # run the app on http://localhost:8080
-mvn test                     # run all tests
+mvn test                     # unit tests only: fast, no Docker
+mvn verify                   # unit tests, then the database tests (*IT), which need Docker
+mvn verify -Dtest=NoUnitTests -Dsurefire.failIfNoSpecifiedTests=false   # database tests only
 mvn test -Dtest=HelloControllerTest            # single test class
 mvn test -Dtest=HelloControllerTest#helloReturnsHelloWorld   # single test method
 mvn package                  # build target/demo-0.0.1-SNAPSHOT.jar
@@ -188,12 +190,19 @@ Each `Want` belongs to a `User` through a non-null `@ManyToOne` (`user_id`, a re
 
 Responses are a mix. `WantController` maps every `Want` to `WantResponse` (a record in `dto`, built by `WantResponse.from`). `User` is still serialized as an entity by `/me`, which is safe only because it is always the caller's own row. When a field must stay hidden, add a response record rather than annotating the entity with `@JsonIgnore`.
 
-Tests use `@WebMvcTest` with MockMvc, which loads only the web slice — no datasource, so `mvn test` passes without a database running. Collaborators are replaced with `@MockitoBean` (Spring Boot 3.4+ replaced `@MockBean`). New controller tests should follow that pattern and name the controller under test in the annotation. They also need:
+There are two kinds of backend test, split the standard Maven way:
+- **Unit tests**, `*Test.java`, run by Surefire in `mvn test`. They need no database and no Docker, as described below.
+- **Database tests**, `*IT.java`, run by Failsafe in `mvn verify` after the unit tests. They `@Import(TestcontainersConfiguration.class)`, which starts the same `postgis/postgis:18-3.6` image as `compose.yaml` in Docker and points the datasource at it with `@ServiceConnection`. The whole context starts, so Flyway migrates an empty database and Hibernate validates every entity: a broken migration fails here, not only at `mvn spring-boot:run`. The container is a bean, so every IT class sharing that setup shares one container through Spring's context cache. Docker Compose support is skipped in tests by default, so the dev database on 5433 is never touched.
+  - They are **not** wrapped in test transactions, so service calls commit as in the app and a rollback can be observed. Each test signs up its own users with fresh Clerk ids instead of cleaning tables.
+  - `FollowNotificationsIT` covers what the fakes cannot: `followIfAbsent` returning 1 then 0, one notification per new follow, the follow rolling back when its notification fails (`@MockitoSpyBean NotificationService`), `markRead`'s `upTo` bound and first-read time, and the cascade on user delete.
+  - Removing `@Transactional` from a service method that runs a `@Modifying` query fails them with `TransactionRequiredException`; the unit tests cannot see that.
+
+Unit tests use `@WebMvcTest` with MockMvc, which loads only the web slice — no datasource, so `mvn test` passes without a database running. Collaborators are replaced with `@MockitoBean` (Spring Boot 3.4+ replaced `@MockBean`). New controller tests should follow that pattern and name the controller under test in the annotation. They also need:
 - `@Import(SecurityConfig.class)`. `@WebMvcTest` does not pick up `@Configuration` classes, and without it Boot's default chain would apply, with CSRF on.
 - `@MockitoBean JwtDecoder`, so `ClerkJwtConfig` and its `CLERK_ISSUER` placeholder are never needed.
 - `.with(jwt().jwt(t -> t.subject("user_...")))` on each authenticated request, plus a test that the route returns 401 without it.
 
-Service-level rules, such as ownership, are tested with plain Mockito (`WantServiceTest`), since the controller tests mock the services.
+Service-level rules, such as ownership, are tested with plain Mockito (`WantServiceTest`), since the controller tests mock the services. Anything that depends on SQL, constraints or transactions belongs in an `*IT` test instead.
 
 ## Schema migrations
 
@@ -239,14 +248,14 @@ Configuration files:
 
 **Hosted database.** Aiven requires TLS; use `sslmode=verify-full&sslrootcert=<path to Aiven's ca.pem>` in the JDBC URL. `ca.pem` is not secret, but is kept outside the repository. In a `.properties` file the path must use forward slashes even on Windows, because backslashes are escapes. Running the `prod` profile locally writes to the real database.
 
-`mvn test` needs neither database, because `@WebMvcTest` loads only the web slice.
+`mvn test` needs neither database, because `@WebMvcTest` loads only the web slice. `mvn verify` needs Docker running, for the Testcontainers database.
 
 ## Continuous integration
 
 `.github/workflows/docker-publish.yml` runs on every push to `master`, on every pull request, and can be triggered manually from the Actions tab.
 - **On a pull request, or a manual run from another branch, only `test-api` and `test-web` run.** `publish-api`, `deploy-api` and `deploy-web` all carry `if: github.ref == 'refs/heads/master'`, so nothing unmerged is ever published as `latest` or deployed. Keep that guard on any new job that publishes or deploys. A PR runs the workflow file from its own branch.
 - On a pull request `test-web` still builds, but skips uploading `dist/`, since nothing deploys it.
-- `test-api` runs `mvn test`.
+- `test-api` runs `mvn verify`: the unit tests, then the Testcontainers database tests, using the Docker preinstalled on the runner.
 - `test-web` runs `npm ci`, `lint`, `test` and `build` in `frontend/` on Node 22, and uploads `dist/` as an artifact. The build reads `vars.CLERK_PUBLISHABLE_KEY` into `VITE_CLERK_PUBLISHABLE_KEY`, and **fails** if it is empty, because a bundle without it is a blank page.
 - When both pass, two jobs run:
   - `publish-api` pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>`.
@@ -274,7 +283,7 @@ It needs two repository secrets, set under Settings → Secrets and variables �
 - `DOCKERHUB_USERNAME` — the Docker Hub account name
 - `DOCKERHUB_TOKEN` — a Docker Hub **access token**, not the account password
 
-The test job needs no database, because the tests are `@WebMvcTest` slices. A future test that touches persistence would need a PostgreSQL service container added to that job.
+The test job declares no database service: the `*IT` tests start their own through Testcontainers.
 
 ## Deployment (Terraform)
 
