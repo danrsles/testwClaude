@@ -239,12 +239,15 @@ Controllers depend on services, never on repositories directly, and dependencies
 ## Tests
 
 ```bash
-mvn test                                        # all tests
+mvn test                                        # unit tests: fast, no Docker
+mvn verify                                      # unit tests, then the database tests (needs Docker)
 mvn test -Dtest=WantControllerTest              # one class
 mvn test -Dtest=WantControllerTest#createsWant  # one method
 ```
 
 Tests are `@WebMvcTest` slices with a mocked service layer, so **they need no database** and pass on a machine with nothing running. They `@Import(SecurityConfig.class)` so requests go through the real security rules, and they sign in with Spring Security's `jwt()` request post-processor. The `JwtDecoder` is a mock, so **they never contact Clerk**. `WantServiceTest` covers the ownership rule and the feed, `FollowServiceTest` who may follow whom and that only a new follow notifies, and `NotificationServiceTest` that you only ever read and mark your own, directly, since the controller tests mock the service away.
+
+**Database tests** (`*IT.java`, run by `mvn verify`) are the other kind. Each run starts a throwaway PostgreSQL with PostGIS in Docker through [Testcontainers](https://testcontainers.com), runs every Flyway migration on it from empty, and calls the real services and repositories, committing for real. They catch what the fakes above cannot: SQL that is wrong, a migration that fails or does not match its entity, a constraint, a transaction that does not roll back. `FollowNotificationsIT` checks that a follow notifies exactly once, that the follow is undone if its notification fails, and how marking read behaves. The first run downloads the image; after that the container starts in a few seconds. They never touch the development database on port 5433.
 
 Frontend checks:
 
