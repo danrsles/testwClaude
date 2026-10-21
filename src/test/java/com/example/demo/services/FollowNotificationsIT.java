@@ -165,8 +165,10 @@ class FollowNotificationsIT {
         ClerkIdentity jordan = signUp("jordan");
         ClerkIdentity alex = signUp("alex");
         ClerkIdentity sam = signUp("sam");
-        followService.follow(idOf(dani), alex);
+        // jordan's first, so its id is below the bound dani marks up to: only
+        // the recipient condition can keep it unread, not the id condition.
         followService.follow(idOf(jordan), alex);
+        followService.follow(idOf(dani), alex);
         Long shown = notificationService.mine(dani).getFirst().getId();
         // Arrives after dani's page was rendered.
         followService.follow(idOf(dani), sam);
@@ -178,8 +180,11 @@ class FollowNotificationsIT {
                 .containsExactly(
                         tuple(idOf(sam), false),
                         tuple(idOf(alex), true));
-        // jordan's notification has a lower id than sam's, but is not dani's.
-        assertThat(notificationService.mine(jordan)).allSatisfy(n -> assertThat(n.getReadAt()).isNull());
+        // jordan's notification is within dani's bound, but is not dani's.
+        List<Notification> jordans = notificationService.mine(jordan);
+        assertThat(jordans).hasSize(1);
+        assertThat(jordans.getFirst().getId()).isLessThan(shown);
+        assertThat(jordans.getFirst().getReadAt()).isNull();
     }
 
     @Test
