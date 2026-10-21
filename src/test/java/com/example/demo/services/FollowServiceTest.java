@@ -6,6 +6,7 @@ import java.util.Set;
 import com.example.demo.dto.PersonResult;
 
 import com.example.demo.models.Follow;
+import com.example.demo.models.NotificationType;
 import com.example.demo.models.User;
 import com.example.demo.repositories.FollowRepository;
 import com.example.demo.repositories.UserRepository;
@@ -39,6 +40,9 @@ class FollowServiceTest {
     @Mock
     private UserService userService;
 
+    @Mock
+    private NotificationService notificationService;
+
     @InjectMocks
     private FollowService followService;
 
@@ -58,12 +62,24 @@ class FollowServiceTest {
     }
 
     @Test
-    void followsAnotherUser() {
+    void followsAnotherUserAndTellsThem() {
         given(userRepository.existsById(2L)).willReturn(true);
+        given(followRepository.followIfAbsent(1L, 2L)).willReturn(1);
 
         followService.follow(2L, DANI);
 
         then(followRepository).should().followIfAbsent(1L, 2L);
+        then(notificationService).should().notify(2L, dani, NotificationType.FOLLOW);
+    }
+
+    @Test
+    void followingAgainDoesNotTellThemTwice() {
+        given(userRepository.existsById(2L)).willReturn(true);
+        given(followRepository.followIfAbsent(1L, 2L)).willReturn(0);
+
+        followService.follow(2L, DANI);
+
+        then(notificationService).should(never()).notify(any(), any(), any());
     }
 
     @Test
@@ -71,6 +87,7 @@ class FollowServiceTest {
         assertThatThrownBy(() -> followService.follow(1L, DANI))
                 .isInstanceOf(CannotFollowYourselfException.class);
         then(followRepository).should(never()).followIfAbsent(anyLong(), anyLong());
+        then(notificationService).should(never()).notify(any(), any(), any());
     }
 
     @Test

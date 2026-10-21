@@ -196,27 +196,41 @@ curl -i -X DELETE -H "Authorization: Bearer $TOKEN" localhost:8080/follows/4
 
 Reload the app after each change to see the list follow along.
 
+### Notifications
+
+When someone follows you, you get a notification. The bell beside your account menu shows how many are unread, and opening it (`/notifications`) lists them, newest first, and marks them read. Ones you had not seen stay highlighted until you leave the page. Notifications are kept in the database whether you are signed in or not, so ones that arrived while you were away are waiting when you come back. The app checks for new ones every 30 seconds while its tab is visible, and again when you return to the tab. Following someone again does not notify them twice.
+
+| Method | Path | Body | Success | Errors |
+|---|---|---|---|---|
+| `GET` | `/notifications` | — | `200` your 50 newest, each `{id, type, actor: {id, username, imageUrl}, createdAt, read}` | — |
+| `POST` | `/notifications/read` | `{"upTo": 8}` | `204`; marks yours up to and including that id read, so any that arrived after you looked stay unread | `400` no `upTo` |
+
+`type` is `FOLLOW` for now. Signups on wants will add more kinds; the plan is in [docs/design/wants-signups-and-notifications.md](docs/design/wants-signups-and-notifications.md).
+
 ## Layout
 
 ```
 src/main/java/com/example/demo/
-  models/        JPA entities and enums (Want, User, Follow, Category)
+  models/        JPA entities and enums (Want, User, Follow, Notification, Category)
   repositories/  Spring Data interfaces
   services/      business logic and the exceptions that map to HTTP status
   controllers/   HTTP endpoints
-  dto/           request bodies and response shapes (WantRequest, WantResponse, UserSummary)
+  dto/           request bodies and response shapes (WantRequest, WantResponse, UserSummary,
+                 NotificationResponse)
   security/      SecurityConfig (who may call what), ClerkJwtConfig (how a token is checked),
                  AuthorizedPartyValidator (the azp check), OriginSecretFilter (CloudFront only)
 src/main/resources/db/migration/   Flyway migrations
 frontend/src/
   api/           transport, one function per endpoint, no state; http.ts attaches the Clerk token
-  hooks/         server state: useWants, and MeProvider/useMe, which load you once and share you
+  hooks/         server state: useWants, MeProvider/useMe, which load you once and share you,
+                 and useNotifications, the one hook on TanStack Query
   types/         shapes mirroring the API
-  components/    the screens (Wants.tsx at /, Info.tsx at /info),
+  components/    the screens (Wants.tsx at /, People.tsx at /people, Notifications.tsx at
+                 /notifications, Info.tsx at /info), NotificationsBell.tsx in the header,
                  SignInScreen.tsx for signed-out visitors, and Avatar.tsx, the round
                  picture beside each want
-  App.tsx        the shell: the sign-in gate, nav and routes (ClerkProvider and
-                 BrowserRouter are in main.tsx)
+  App.tsx        the shell: the sign-in gate, nav and routes (ClerkProvider,
+                 QueryClientProvider and BrowserRouter are in main.tsx)
 terraform/       single-instance AWS deployment
 ```
 
@@ -225,12 +239,15 @@ Controllers depend on services, never on repositories directly, and dependencies
 ## Tests
 
 ```bash
-mvn test                                        # all tests
+mvn test                                        # unit tests: fast, no Docker
+mvn verify                                      # unit tests, then the database tests (needs Docker)
 mvn test -Dtest=WantControllerTest              # one class
 mvn test -Dtest=WantControllerTest#createsWant  # one method
 ```
 
-Tests are `@WebMvcTest` slices with a mocked service layer, so **they need no database** and pass on a machine with nothing running. They `@Import(SecurityConfig.class)` so requests go through the real security rules, and they sign in with Spring Security's `jwt()` request post-processor. The `JwtDecoder` is a mock, so **they never contact Clerk**. `WantServiceTest` covers the ownership rule and the feed, and `FollowServiceTest` who may follow whom, directly, since the controller tests mock the service away.
+Tests are `@WebMvcTest` slices with a mocked service layer, so **they need no database** and pass on a machine with nothing running. They `@Import(SecurityConfig.class)` so requests go through the real security rules, and they sign in with Spring Security's `jwt()` request post-processor. The `JwtDecoder` is a mock, so **they never contact Clerk**. `WantServiceTest` covers the ownership rule and the feed, `FollowServiceTest` who may follow whom and that only a new follow notifies, and `NotificationServiceTest` that you only ever read and mark your own, directly, since the controller tests mock the service away.
+
+**Database tests** (`*IT.java`, run by `mvn verify`) are the other kind. Each run starts a throwaway PostgreSQL with PostGIS in Docker through [Testcontainers](https://testcontainers.com), runs every Flyway migration on it from empty, and calls the real services and repositories, committing for real. They catch what the fakes above cannot: SQL that is wrong, a migration that fails or does not match its entity, a constraint, a transaction that does not roll back. `FollowNotificationsIT` checks that a follow notifies exactly once, that the follow is undone if its notification fails, and how marking read behaves. The first run downloads the image; after that the container starts in a few seconds. They never touch the development database on port 5433.
 
 Frontend checks:
 
@@ -264,7 +281,7 @@ To replay migrations from scratch, which destroys all data:
 docker compose down -v && docker compose up -d
 ```
 
-`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. `V8__clerk_picture_drop_nickname.sql` drops `nickname`, renames `s3_url` to `image_url` and empties it, once the profile page went and the picture became Clerk's. `V9__create_follows.sql` creates `follows`, one row per follower and followee, unique per pair, never yourself. `V10__seed_test_users.sql` adds the test users `alex`, `sam` and `jordan` with two wants each; like V2, delete it before real use. V3 and V4 stay even though their table is gone, because applied migrations must never change.
+`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. `V8__clerk_picture_drop_nickname.sql` drops `nickname`, renames `s3_url` to `image_url` and empties it, once the profile page went and the picture became Clerk's. `V9__create_follows.sql` creates `follows`, one row per follower and followee, unique per pair, never yourself. `V10__seed_test_users.sql` adds the test users `alex`, `sam` and `jordan` with two wants each; like V2, delete it before real use. `V11__create_notifications.sql` creates `notifications`: who it is for, who did it, what kind, when, and when it was read. V3 and V4 stay even though their table is gone, because applied migrations must never change.
 
 If you delete a migration that hasn't run yet and replace it with another of the same version, run `mvn clean` first. Otherwise the old file's compiled copy in `target/classes` stays behind, and Flyway refuses to start with *"Found more than one migration with version"*.
 
@@ -295,13 +312,13 @@ If `DB_URL` is missing, startup fails with `'url' must start with "jdbc"`. That 
 
 ## Continuous integration
 
-`.github/workflows/docker-publish.yml` runs on every push to `master`, and can be triggered manually from the Actions tab.
+`.github/workflows/docker-publish.yml` runs on every push to `master`, on every pull request, and can be triggered manually from the Actions tab. A pull request runs only the two test jobs, so it shows a pass or fail before merging; publishing and deploying happen only from `master`.
 
 | Job | What it does |
 |---|---|
-| Test API | `mvn test` |
-| Test and build web | `npm ci`, `lint`, `test`, `build` on Node 22; keeps `dist/` as an artifact |
-| Publish API image | when both test jobs pass, pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>` |
+| Test API | `mvn verify`: the unit tests, then the database tests in Docker |
+| Test and build web | `npm ci`, `lint`, `test`, `build` on Node 22; keeps `dist/` as an artifact, except on pull requests |
+| Publish API image | on `master` only, when both test jobs pass, pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>` |
 | Deploy API | after the image is published, tells the API server through SSM Run Command to pull it, restart, and pass a health check |
 | Deploy web | when both test jobs pass, uploads that tested `dist/` to S3 and refreshes CloudFront |
 
@@ -402,7 +419,8 @@ These are deliberate omissions, not oversights:
 - **Usernames are optional in Clerk.** Unless usernames are required under **Configure → User & authentication**, a user who signs up with Google alone has none, and shows as their Clerk id (`user_2abc...`) until they set one in the account menu.
 - **No roles.** Every signed-in user has the same rights; there is no admin who can moderate other people's wants.
 - **Pictures live in Clerk.** The app stores only each picture's URL, so moving off Clerk would mean moving everyone's picture too. Other people see a changed picture the next time they load the list; nothing in the app updates live.
-- **Other users go out as response types only.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `imageUrl`, `GET /follows` returns `UserSummary`, with the same three fields, and `GET /users?q=` returns `PersonResult`, which adds only whether you follow them. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users should return `UserSummary` or its own response type.
+- **Notifications are polled, not pushed.** A new one can take up to 30 seconds to show, and nothing reaches you while the app is closed: no browser or phone notifications. The table works unchanged under either; see the design doc.
+- **Other users go out as response types only.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `imageUrl`, `GET /follows` returns `UserSummary`, with the same three fields, `GET /users?q=` returns `PersonResult`, which adds only whether you follow them, and `GET /notifications` names each actor by `UserSummary`. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users should return `UserSummary` or its own response type.
 - **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext, including the CloudFront origin secret. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed

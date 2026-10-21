@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
@@ -36,6 +37,11 @@ vi.mock('./api/people', () => ({
   unfollow: vi.fn(),
 }))
 
+vi.mock('./api/notifications', () => ({
+  listNotifications: vi.fn().mockResolvedValue([]),
+  markNotificationsRead: vi.fn(),
+}))
+
 vi.mock('./api/me', () => ({
   getMe: vi.fn().mockResolvedValue({
     id: 1,
@@ -48,10 +54,13 @@ vi.mock('./api/me', () => ({
 }))
 
 function renderAt(path: string) {
+  // main.tsx provides the query client in the app; each test gets its own.
   render(
-    <MemoryRouter initialEntries={[path]}>
-      <App />
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={[path]}>
+        <App />
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 
@@ -101,6 +110,18 @@ describe('App routing', () => {
 
     await userEvent.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Info' }))
     await waitFor(() => expect(document.title).toBe('About · Wants'))
+  })
+
+  it('shows the notifications page at /notifications', () => {
+    renderAt('/notifications')
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Notifications' })).toBeInTheDocument()
+  })
+
+  it('shows the notifications bell beside the account menu on every screen', async () => {
+    renderAt('/info')
+
+    expect(await screen.findByRole('link', { name: 'Notifications' })).toHaveAttribute('href', '/notifications')
   })
 
   it('shows the info page at /info', () => {

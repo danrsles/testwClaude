@@ -1,6 +1,8 @@
 import { Show, UserButton } from '@clerk/react'
 import { NavLink, Route, Routes } from 'react-router'
 import Info from './components/Info'
+import Notifications from './components/Notifications'
+import NotificationsBell from './components/NotificationsBell'
 import People from './components/People'
 import SignInScreen from './components/SignInScreen'
 import Wants from './components/Wants'
@@ -19,9 +21,9 @@ const NAV = [
  * Clerk is still loading.
  *
  * Each screen is its own component, so a new screen means a new component and
- * a Route here rather than changes to an existing one. ClerkProvider and the
- * BrowserRouter live in main.tsx, so tests can render App inside a
- * MemoryRouter with Clerk stubbed.
+ * a Route here rather than changes to an existing one. ClerkProvider, the
+ * QueryClientProvider and the BrowserRouter live in main.tsx, so tests can
+ * render App inside a MemoryRouter and a fresh query client with Clerk stubbed.
  */
 export default function App() {
   return (
@@ -50,13 +52,18 @@ export default function App() {
                   </NavLink>
                 ))}
               </nav>
-              {/* Clerk's account menu: picture, username, email, sign out. */}
-              <UserButton />
+              <div className="flex items-center gap-3">
+                {/* Polls for notifications on every screen. */}
+                <NotificationsBell />
+                {/* Clerk's account menu: picture, username, email, sign out. */}
+                <UserButton />
+              </div>
             </header>
 
             <Routes>
               <Route path="/" element={<Wants />} />
               <Route path="/people" element={<People />} />
+              <Route path="/notifications" element={<Notifications />} />
               <Route path="/info" element={<Info />} />
             </Routes>
           </main>

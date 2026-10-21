@@ -8,7 +8,9 @@ No Maven wrapper is checked in, so use a system `mvn` (3.9.x) with JDK 21.
 
 ```bash
 mvn spring-boot:run          # run the app on http://localhost:8080
-mvn test                     # run all tests
+mvn test                     # unit tests only: fast, no Docker
+mvn verify                   # unit tests, then the database tests (*IT), which need Docker
+mvn verify -Dtest=NoUnitTests -Dsurefire.failIfNoSpecifiedTests=false   # database tests only
 mvn test -Dtest=HelloControllerTest            # single test class
 mvn test -Dtest=HelloControllerTest#helloReturnsHelloWorld   # single test method
 mvn package                  # build target/demo-0.0.1-SNAPSHOT.jar
@@ -53,15 +55,20 @@ src/api/http.ts                 `fail`, plus `authFetch`, which attaches the Cle
 src/api/wants.ts                transport: one function per endpoint, no state
 src/api/me.ts                   the same for /me (GET and PUT)
 src/api/people.ts               the same for /users?q= and /follows
+src/api/notifications.ts        the same for /notifications and /notifications/read
 src/hooks/useWants.ts           server state: the cached list and its mutations
 src/hooks/usePeople.ts          server state: who you follow, or search results, and follow/unfollow
+src/hooks/useNotifications.ts   server state on TanStack Query: your notifications, polled, and markRead
 src/hooks/MeProvider.tsx        server state: the signed-in user, loaded once and shared
 src/hooks/useOnPictureChange.ts calls back when you change your picture in Clerk, after minting a fresh token
 src/hooks/useMe.ts              the context MeProvider fills, and the hook that reads it
 src/types/wants.ts              the shapes the API returns and accepts
 src/types/people.ts             Person, a search result or someone you follow
+src/types/notifications.ts      Notification and its Actor
 src/components/Wants.tsx        the whole wants screen, including its own UI state
 src/components/People.tsx       search users by name and follow or unfollow them, routed at /people
+src/components/Notifications.tsx your notifications, routed at /notifications; opening it marks them read
+src/components/NotificationsBell.tsx the header's bell: unread count, link to /notifications
 src/components/Info.tsx         a static about page, routed at /info
 src/components/Avatar.tsx       round picture with a local placeholder fallback, beside each want
 src/components/SignInScreen.tsx Clerk's <SignIn>, shown instead of the app when signed out
@@ -88,7 +95,13 @@ Which user the app acts as comes from the token, so no component passes a user i
 - The first value, Clerk finishing loading the user, is not treated as a change.
 - `Wants.test.tsx` mocks `@clerk/react` (`useUser`, `getToken`) with a `vi.hoisted` user whose `imageUrl` a test changes between `rerender`s. `App.test.tsx`'s Clerk mock includes both too.
 
-If more state needs sharing, reach for TanStack Query rather than more providers.
+If more state needs sharing, reach for TanStack Query rather than more providers. **Notifications already do** (`@tanstack/react-query`, the `QueryClientProvider` in `main.tsx`):
+- `useNotifications` is called by both `NotificationsBell` and `Notifications`; the cache serves both from one request, so marking read on the page clears the badge in the same render.
+- It polls with `refetchInterval` (`POLL_MS`, 30 s), which pauses in background tabs, and refetches on window focus. The bell is in the header of every signed-in screen, so polling never stops while the app is open.
+- The query key is `['notifications', me.id]`, from `useMe`, so after signing in as someone else the previous person's cached list is never shown. It is disabled until `/me` has loaded.
+- `markRead` updates the cache optimistically, then refetches. Its `mutationFn` wraps the `api/` call because TanStack v5 passes a context object as a second argument.
+- `Notifications.tsx` marks up to the newest id it shows (`upTo`), not "all", so one that arrived after the page rendered stays unread. A ref remembers the last id sent, so a failed mark is not retried on every render.
+- Tests render inside a fresh `QueryClient` with `retry: false`; `App.test.tsx` wraps `App` in one too and stubs `api/notifications`.
 
 `Avatar.tsx` shows `src/assets/avatar-placeholder.svg` when its `src` is null and also when the URL fails to load. Vite inlines that SVG as a `data:` URI, so tests compare `src` against the imported asset rather than matching a file name.
 
@@ -113,13 +126,15 @@ State is local `useState`. All server data is refetched after each mutation, whi
 
 ## Architecture
 
+**Planned, partly built:** the design for notifications and for signups on wants with a capacity is in `docs/design/wants-signups-and-notifications.md`. Step 1, notifications for follows, is built and described below; signups, closing, cancelling and expiry are not. Everything below describes the code as it is; move facts here as each step lands.
+
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
 
-- `models` — JPA entities and enums (`Want`, `User`, `Follow`, `Category`)
-- `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`, `FollowRepository`)
-- `services` — business logic, the only layer controllers talk to (`WantService`, `UserService`, `FollowService`), plus `ClerkIdentity`
-- `controllers` — HTTP endpoints (`WantController`, `UserController`, `FollowController`), plus `Identities`, which turns a token into a `ClerkIdentity`
-- `dto` — request bodies with their Bean Validation constraints (`WantRequest`) and response shapes (`WantResponse`, `UserSummary`). New request and response records go here, not in `controllers`.
+- `models` — JPA entities and enums (`Want`, `User`, `Follow`, `Notification`, `NotificationType`, `Category`)
+- `repositories` — Spring Data interfaces (`WantRepository`, `UserRepository`, `FollowRepository`, `NotificationRepository`)
+- `services` — business logic, the only layer controllers talk to (`WantService`, `UserService`, `FollowService`, `NotificationService`), plus `ClerkIdentity`
+- `controllers` — HTTP endpoints (`WantController`, `UserController`, `FollowController`, `PeopleController`, `NotificationController`), plus `Identities`, which turns a token into a `ClerkIdentity`
+- `dto` — request bodies with their Bean Validation constraints (`WantRequest`, `MarkReadRequest`) and response shapes (`WantResponse`, `UserSummary`, `PersonResult`, `NotificationResponse`). New request and response records go here, not in `controllers`.
 - `security` — `SecurityConfig` (the filter chain), `ClerkJwtConfig` (the `JwtDecoder`), `AuthorizedPartyValidator` (the `azp` check) and `OriginSecretFilter`, which rejects requests that did not come through CloudFront
 
 **Authentication.** Every route needs a Clerk session token in `Authorization: Bearer`, except `/actuator/health` and `/error`. Spring Security runs as an OAuth2 resource server. It is stateless, and CSRF is off, because nothing reads cookies.
@@ -155,6 +170,11 @@ Endpoints:
 - `PUT /follows/{userId}`, `DELETE /follows/{userId}` — follow or unfollow, both 204 and idempotent. The follower is the token's user. Following yourself is a 400 (`CannotFollowYourselfException`), an unknown user a 404 (`UserNotFoundException`). Following again is a no-op through `FollowRepository.followIfAbsent`, a native `INSERT ... ON CONFLICT DO NOTHING`, for the same rollback-only reason as `insertIfAbsent`. The **People** screen (`People.tsx`) is the UI for both.
 - `GET /follows` — the users you follow, as `UserSummary` (`{id, username, imageUrl}`).
 - `GET /users?q=` — people search (`PeopleController` → `FollowService.search`): up to 20 users whose username contains `q`, ignoring case, never the caller, as `PersonResult` (`{id, username, imageUrl, following}`). A blank or missing `q` returns `[]` rather than everyone. `following` comes from `FollowRepository.findFolloweeIds`, JPQL parsed at startup like the feed queries. This is the only way to reach another user, and only by public fields.
+- `GET /notifications` — your 50 newest notifications, newest first, as `NotificationResponse` (`{id, type, actor, createdAt, read}`), the actor a `UserSummary`. Guarded by `NotificationControllerTest.listsYourNotificationsWithTheActorByPublicDetailsOnly`. `POST /notifications/read` with `{"upTo": id}` marks yours up to that id read (204; 400 without `upTo`). Both act only on the token's user; there is no route to anyone else's.
+  - The table is the letterbox: a row is written for every event whether or not the recipient is online, in the same transaction as the event. The frontend polls; there is no push.
+  - `FollowService.follow` notifies only when `followIfAbsent` returns 1, the rows it inserted, so following again does not notify twice.
+  - `NotificationRepository.notify` and `markRead` are native SQL, so the database fills in `created_at` and `read_at`; the entity maps both read-only. `markRead` never overwrites an existing `read_at`.
+  - A new kind of notification needs a `NotificationType` constant **and** a migration widening `notifications_type_check`, or the insert fails.
 - `GET /actuator/health` — the only unauthenticated route. Actuator exposes nothing else by default, and the health details stay hidden.
 
 **Every field of `User` comes from Clerk:** `username`, `clerk_id`, `email`, `last_sign_in_at` and `image_url`, all copied from the token by `UserService`. Nothing about a user is edited through this API.
@@ -174,12 +194,19 @@ Each `Want` belongs to a `User` through a non-null `@ManyToOne` (`user_id`, a re
 
 Responses are a mix. `WantController` maps every `Want` to `WantResponse` (a record in `dto`, built by `WantResponse.from`). `User` is still serialized as an entity by `/me`, which is safe only because it is always the caller's own row. When a field must stay hidden, add a response record rather than annotating the entity with `@JsonIgnore`.
 
-Tests use `@WebMvcTest` with MockMvc, which loads only the web slice — no datasource, so `mvn test` passes without a database running. Collaborators are replaced with `@MockitoBean` (Spring Boot 3.4+ replaced `@MockBean`). New controller tests should follow that pattern and name the controller under test in the annotation. They also need:
+There are two kinds of backend test, split the standard Maven way:
+- **Unit tests**, `*Test.java`, run by Surefire in `mvn test`. They need no database and no Docker, as described below.
+- **Database tests**, `*IT.java`, run by Failsafe in `mvn verify` after the unit tests. They `@Import(TestcontainersConfiguration.class)`, which starts the same `postgis/postgis:18-3.6` image as `compose.yaml` in Docker and points the datasource at it with `@ServiceConnection`. The whole context starts, so Flyway migrates an empty database and Hibernate validates every entity: a broken migration fails here, not only at `mvn spring-boot:run`. The container is a bean, so every IT class sharing that setup shares one container through Spring's context cache. Docker Compose support is skipped in tests by default, so the dev database on 5433 is never touched.
+  - They are **not** wrapped in test transactions, so service calls commit as in the app and a rollback can be observed. Each test signs up its own users with fresh Clerk ids instead of cleaning tables.
+  - `FollowNotificationsIT` covers what the fakes cannot: `followIfAbsent` returning 1 then 0, one notification per new follow, the follow rolling back when its notification fails (`@MockitoSpyBean NotificationService`), `markRead`'s `upTo` bound and first-read time, and the cascade on user delete.
+  - Removing `@Transactional` from a service method that runs a `@Modifying` query fails them with `TransactionRequiredException`; the unit tests cannot see that.
+
+Unit tests use `@WebMvcTest` with MockMvc, which loads only the web slice — no datasource, so `mvn test` passes without a database running. Collaborators are replaced with `@MockitoBean` (Spring Boot 3.4+ replaced `@MockBean`). New controller tests should follow that pattern and name the controller under test in the annotation. They also need:
 - `@Import(SecurityConfig.class)`. `@WebMvcTest` does not pick up `@Configuration` classes, and without it Boot's default chain would apply, with CSRF on.
 - `@MockitoBean JwtDecoder`, so `ClerkJwtConfig` and its `CLERK_ISSUER` placeholder are never needed.
 - `.with(jwt().jwt(t -> t.subject("user_...")))` on each authenticated request, plus a test that the route returns 401 without it.
 
-Service-level rules, such as ownership, are tested with plain Mockito (`WantServiceTest`), since the controller tests mock the services.
+Service-level rules, such as ownership, are tested with plain Mockito (`WantServiceTest`), since the controller tests mock the services. Anything that depends on SQL, constraints or transactions belongs in an `*IT` test instead.
 
 ## Schema migrations
 
@@ -191,7 +218,7 @@ The project moved from MySQL to PostgreSQL once, and V1 and V3 were rewritten in
 
 SQL notes for this schema: ids are `BIGINT GENERATED BY DEFAULT AS IDENTITY`, which `GenerationType.IDENTITY` maps to. Enum-like columns such as `wants.category` are `VARCHAR` with a `CHECK` constraint, not native PostgreSQL enum types — `@Enumerated(EnumType.STRING)` is validated as a character column, and a native enum would fail `ddl-auto=validate`. PostGIS and `btree_gist` are available on the hosted database and in the local image; enable them with `CREATE EXTENSION IF NOT EXISTS` in the migration that first needs them.
 
-`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` created the profiles table that `V7__merge_user_profiles_into_users.sql` later moves onto `users` and drops. `V8__clerk_picture_drop_nickname.sql` drops `users.nickname` and renames `s3_url` to `image_url`, emptied so each user's next request fills in their Clerk picture. `V9__create_follows.sql` creates `follows`. `V10__seed_test_users.sql` adds `alex`, `sam` and `jordan` with two wants each and no `clerk_id`, so they are read-only like `dani` and appear in your list only once you follow them. Like V2, V10 runs in every environment, so delete it before real use. Your own follows can't be seeded: your row only exists after your first sign-in. V3 and V4 stay, because they have been applied; deleting or editing them would break Flyway's checksums.
+`V2__seed_sample_data.sql` inserts the user `dani` with two wants, and `V4__seed_dani_profile.sql` gives `dani` a profile, so a fresh database is usable while users can't be created through the API. Both run in every environment Flyway touches, so delete them before this schema is used for anything real. `V3__create_user_profiles.sql` created the profiles table that `V7__merge_user_profiles_into_users.sql` later moves onto `users` and drops. `V8__clerk_picture_drop_nickname.sql` drops `users.nickname` and renames `s3_url` to `image_url`, emptied so each user's next request fills in their Clerk picture. `V9__create_follows.sql` creates `follows`. `V11__create_notifications.sql` creates `notifications`. `V10__seed_test_users.sql` adds `alex`, `sam` and `jordan` with two wants each and no `clerk_id`, so they are read-only like `dani` and appear in your list only once you follow them. Like V2, V10 runs in every environment, so delete it before real use. Your own follows can't be seeded: your row only exists after your first sign-in. V3 and V4 stay, because they have been applied; deleting or editing them would break Flyway's checksums.
 
 Resetting from scratch — the only safe way to replay migrations, and it destroys all data:
 
@@ -225,12 +252,14 @@ Configuration files:
 
 **Hosted database.** Aiven requires TLS; use `sslmode=verify-full&sslrootcert=<path to Aiven's ca.pem>` in the JDBC URL. `ca.pem` is not secret, but is kept outside the repository. In a `.properties` file the path must use forward slashes even on Windows, because backslashes are escapes. Running the `prod` profile locally writes to the real database.
 
-`mvn test` needs neither database, because `@WebMvcTest` loads only the web slice.
+`mvn test` needs neither database, because `@WebMvcTest` loads only the web slice. `mvn verify` needs Docker running, for the Testcontainers database.
 
 ## Continuous integration
 
-`.github/workflows/docker-publish.yml` runs on every push to `master` and can be triggered manually from the Actions tab.
-- `test-api` runs `mvn test`.
+`.github/workflows/docker-publish.yml` runs on every push to `master`, on every pull request, and can be triggered manually from the Actions tab.
+- **On a pull request, or a manual run from another branch, only `test-api` and `test-web` run.** `publish-api`, `deploy-api` and `deploy-web` all carry `if: github.ref == 'refs/heads/master'`, so nothing unmerged is ever published as `latest` or deployed. Keep that guard on any new job that publishes or deploys. A PR runs the workflow file from its own branch.
+- On a pull request `test-web` still builds, but skips uploading `dist/`, since nothing deploys it.
+- `test-api` runs `mvn verify`: the unit tests, then the Testcontainers database tests, using the Docker preinstalled on the runner.
 - `test-web` runs `npm ci`, `lint`, `test` and `build` in `frontend/` on Node 22, and uploads `dist/` as an artifact. The build reads `vars.CLERK_PUBLISHABLE_KEY` into `VITE_CLERK_PUBLISHABLE_KEY`, and **fails** if it is empty, because a bundle without it is a blank page.
 - When both pass, two jobs run:
   - `publish-api` pushes `danrsles/wants-api` tagged `latest` and `sha-<commit>`.
@@ -258,7 +287,7 @@ It needs two repository secrets, set under Settings → Secrets and variables �
 - `DOCKERHUB_USERNAME` — the Docker Hub account name
 - `DOCKERHUB_TOKEN` — a Docker Hub **access token**, not the account password
 
-The test job needs no database, because the tests are `@WebMvcTest` slices. A future test that touches persistence would need a PostgreSQL service container added to that job.
+The test job declares no database service: the `*IT` tests start their own through Testcontainers.
 
 ## Deployment (Terraform)
 
