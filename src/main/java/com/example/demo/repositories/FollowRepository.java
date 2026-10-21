@@ -24,10 +24,11 @@ public interface FollowRepository extends JpaRepository<Follow, Long> {
      * Follows unless already following. ON CONFLICT makes a repeat, or two at
      * once, a no-op rather than a unique-constraint exception, which would
      * mark the surrounding transaction rollback-only (as in
-     * UserRepository.insertIfAbsent).
+     * UserRepository.insertIfAbsent). Returns the rows inserted: 1 for a new
+     * follow, 0 if it already existed, so only a new follow notifies.
      */
     @Modifying
     @Query(value = "INSERT INTO follows (follower_id, followee_id) VALUES (:followerId, :followeeId) "
             + "ON CONFLICT DO NOTHING", nativeQuery = true)
-    void followIfAbsent(@Param("followerId") Long followerId, @Param("followeeId") Long followeeId);
+    int followIfAbsent(@Param("followerId") Long followerId, @Param("followeeId") Long followeeId);
 }

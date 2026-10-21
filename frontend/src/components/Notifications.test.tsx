@@ -1,0 +1,174 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { getMe } from '../api/me'
+import { listNotifications, markNotificationsRead } from '../api/notifications'
+import MeProvider from '../hooks/MeProvider'
+import { POLL_MS } from '../hooks/useNotifications'
+import type { Notification } from '../types/notifications'
+import Notifications from './Notifications'
+import NotificationsBell from './NotificationsBell'
+
+// Stubbed at the api boundary, as in Wants.test.tsx.
+vi.mock('../api/notifications', () => ({
+  listNotifications: vi.fn(),
+  markNotificationsRead: vi.fn(),
+}))
+
+vi.mock('../api/me', () => ({ getMe: vi.fn() }))
+
+function followedBy(id: number, username: string, read = false): Notification {
+  return {
+    id,
+    type: 'FOLLOW',
+    actor: { id: id + 100, username, imageUrl: null },
+    createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    read,
+  }
+}
+
+/**
+ * The bell and the page together, as in the app, so a test can see one
+ * change the other. A fresh query client per test, without retries, so a
+ * failure shows at once and nothing is cached between tests.
+ */
+function renderAt(path: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>
+        <MeProvider>
+          <NotificationsBell />
+          <Routes>
+            <Route path="/" element={<p>Home</p>} />
+            <Route path="/notifications" element={<Notifications />} />
+          </Routes>
+        </MeProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe('NotificationsBell', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getMe).mockResolvedValue({
+      id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null, imageUrl: null,
+    })
+    vi.mocked(markNotificationsRead).mockResolvedValue()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('names the unread count and links to the notifications page', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([followedBy(2, 'alex'), followedBy(1, 'sam', true)])
+    renderAt('/')
+
+    const bell = await screen.findByRole('link', { name: 'Notifications, 1 unread' })
+    expect(bell).toHaveAttribute('href', '/notifications')
+  })
+
+  it('has no count when everything is read', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([followedBy(1, 'sam', true)])
+    renderAt('/')
+
+    await waitFor(() => expect(listNotifications).toHaveBeenCalled())
+    expect(screen.getByRole('link', { name: 'Notifications' })).toBeInTheDocument()
+  })
+
+  it('polls, so a new follow shows without reloading', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.mocked(listNotifications).mockResolvedValue([])
+    renderAt('/')
+    await screen.findByRole('link', { name: 'Notifications' })
+
+    vi.mocked(listNotifications).mockResolvedValue([followedBy(1, 'alex')])
+    await act(() => vi.advanceTimersByTimeAsync(POLL_MS))
+
+    expect(await screen.findByRole('link', { name: 'Notifications, 1 unread' })).toBeInTheDocument()
+  })
+})
+
+describe('Notifications', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getMe).mockResolvedValue({
+      id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null, imageUrl: null,
+    })
+    vi.mocked(markNotificationsRead).mockResolvedValue()
+  })
+
+  it('lists who followed you, newest first', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([followedBy(2, 'alex'), followedBy(1, 'sam', true)])
+    renderAt('/notifications')
+
+    const items = await screen.findAllByRole('listitem')
+    expect(items.map((li) => li.textContent)).toEqual([
+      expect.stringContaining('alex started following you'),
+      expect.stringContaining('sam started following you'),
+    ])
+    expect(within(items[0]).getByText('5 minutes ago')).toBeInTheDocument()
+  })
+
+  it('marks what it shows read, clears the badge, and keeps the unseen ones marked new', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([followedBy(2, 'alex'), followedBy(1, 'sam', true)])
+    // As the server would: once marked, the refetch that follows returns them read.
+    vi.mocked(markNotificationsRead).mockImplementation(async () => {
+      vi.mocked(listNotifications).mockResolvedValue([followedBy(2, 'alex', true), followedBy(1, 'sam', true)])
+    })
+    renderAt('/notifications')
+
+    await waitFor(() => expect(markNotificationsRead).toHaveBeenCalledWith(2))
+    expect(await screen.findByRole('link', { name: 'Notifications' })).toBeInTheDocument()
+
+    const [alex, sam] = screen.getAllByRole('listitem')
+    expect(within(alex).getByText('New:')).toBeInTheDocument()
+    expect(within(sam).queryByText('New:')).not.toBeInTheDocument()
+  })
+
+  it('marks nothing when everything is already read', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([followedBy(1, 'sam', true)])
+    renderAt('/notifications')
+
+    await screen.findByText(/sam/)
+    expect(markNotificationsRead).not.toHaveBeenCalled()
+  })
+
+  it('says so when there are none', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([])
+    renderAt('/notifications')
+
+    expect(await screen.findByText('Nothing yet.')).toBeInTheDocument()
+  })
+
+  it('shows why loading failed', async () => {
+    vi.mocked(listNotifications).mockRejectedValue(new Error('Server unavailable'))
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Server unavailable')
+  })
+
+  it('does not retry marking read on every render when it fails', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([followedBy(2, 'alex')])
+    vi.mocked(markNotificationsRead).mockRejectedValue(new Error('Server unavailable'))
+    renderAt('/notifications')
+
+    await waitFor(() => expect(markNotificationsRead).toHaveBeenCalledTimes(1))
+    // The refetch after the failure brings it back unread; the bell says so.
+    expect(await screen.findByRole('link', { name: 'Notifications, 1 unread' })).toBeInTheDocument()
+    expect(markNotificationsRead).toHaveBeenCalledTimes(1)
+  })
+
+  it('goes to the page from the bell', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([followedBy(1, 'alex')])
+    renderAt('/')
+
+    await userEvent.click(await screen.findByRole('link', { name: 'Notifications, 1 unread' }))
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Notifications' })).toBeInTheDocument()
+  })
+})
