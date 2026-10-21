@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: planned, not built.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: step 1 built (notifications for follows); steps 2 to 5 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 
@@ -103,7 +103,7 @@ Responses that show other people (actors, lineups) need their own records with p
 
 Each step is one PR and works without the ones after it.
 
-1. **Notifications foundation:** the table, `GET /notifications`, `POST /notifications/read`, the bell in the nav with an unread count and 30-second polling, and `FOLLOW` (which needs `followIfAbsent` to return the rows it inserted).
+1. **Done. Notifications foundation:** the table, `GET /notifications`, `POST /notifications/read`, the bell in the header with an unread count and 30-second polling (on TanStack Query, shared by the bell and the page), and `FOLLOW` (which needs `followIfAbsent` to return the rows it inserted).
 2. **Capacity and signups:** the columns, `want_signups`, the owner's automatic seat, signing up and withdrawing, `WANT_SIGNUP` and `WANT_WITHDRAWN`.
 3. **Close, reopen and cancel:** `WANT_CLOSED`, `WANT_REOPENED`, `WANT_CANCELLED`; delete becomes cancel.
 4. **Expiry job:** automatic closing at the deadline.

@@ -6,6 +6,7 @@ import java.util.Set;
 import com.example.demo.dto.PersonResult;
 
 import com.example.demo.models.Follow;
+import com.example.demo.models.NotificationType;
 import com.example.demo.models.User;
 import com.example.demo.repositories.FollowRepository;
 import com.example.demo.repositories.UserRepository;
@@ -24,15 +25,21 @@ public class FollowService {
     private final FollowRepository followRepository;
     private final UserRepository userRepository;
     private final UserService userService;
+    private final NotificationService notificationService;
 
     public FollowService(FollowRepository followRepository, UserRepository userRepository,
-            UserService userService) {
+            UserService userService, NotificationService notificationService) {
         this.followRepository = followRepository;
         this.userRepository = userRepository;
         this.userService = userService;
+        this.notificationService = notificationService;
     }
 
-    /** 400 for yourself, 404 for an unknown user; following again changes nothing. */
+    /**
+     * 400 for yourself, 404 for an unknown user; following again changes
+     * nothing. A new follow tells the person followed, in the same
+     * transaction, so they hear about it once.
+     */
     @Transactional
     public void follow(Long followeeId, ClerkIdentity who) {
         User me = userService.current(who);
@@ -42,7 +49,9 @@ public class FollowService {
         if (!userRepository.existsById(followeeId)) {
             throw new UserNotFoundException(followeeId);
         }
-        followRepository.followIfAbsent(me.getId(), followeeId);
+        if (followRepository.followIfAbsent(me.getId(), followeeId) == 1) {
+            notificationService.notify(followeeId, me, NotificationType.FOLLOW);
+        }
     }
 
     /** Succeeds whether or not you were following them. */
