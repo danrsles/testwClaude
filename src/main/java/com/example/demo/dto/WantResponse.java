@@ -2,6 +2,7 @@ package com.example.demo.dto;
 
 import com.example.demo.models.Category;
 import com.example.demo.models.Want;
+import com.example.demo.models.WantStatus;
 
 /**
  * A want as the API returns it. Your wants appear in your followers' lists,
@@ -11,10 +12,11 @@ import com.example.demo.models.Want;
  * added here on purpose.
  *
  * seatsTaken counts the owner; signedUp says whether the person asking holds
- * a seat. Neither is on the entity, so WantService works them out.
+ * a seat. Neither is on the entity, so WantService works them out. status
+ * is ACTIVE, CLOSED or CANCELLED; a full want is still ACTIVE.
  */
 public record WantResponse(Long id, String message, Category category, Long userId, String username,
-        String imageUrl, int capacity, int seatsTaken, boolean signedUp) {
+        String imageUrl, int capacity, int seatsTaken, boolean signedUp, WantStatus status) {
 
     public static WantResponse from(Want want, int seatsTaken, boolean signedUp) {
         return new WantResponse(
@@ -26,6 +28,7 @@ public record WantResponse(Long id, String message, Category category, Long user
                 want.getUser().getImageUrl(),
                 want.getCapacity(),
                 seatsTaken,
-                signedUp);
+                signedUp,
+                want.getStatus());
     }
 }

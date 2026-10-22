@@ -1,5 +1,6 @@
 package com.example.demo.services;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +12,7 @@ import com.example.demo.models.Category;
 import com.example.demo.models.NotificationType;
 import com.example.demo.models.User;
 import com.example.demo.models.Want;
+import com.example.demo.models.WantStatus;
 import com.example.demo.repositories.WantRepository;
 import com.example.demo.repositories.WantSignupRepository;
 
@@ -19,9 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Each signed-in user sees their own wants and those of the people they
- * follow, but only a want's owner may change or delete it. The owner is
- * always the signed-in user, identified by the Clerk id from the token, never
- * an id sent in the request.
+ * follow, but only a want's owner may change, close, reopen or cancel it. The
+ * owner is always the signed-in user, identified by the Clerk id from the
+ * token, never an id sent in the request.
  *
  * Wants come back as WantResponse rather than the entity, because how full a
  * want is and whether you hold a seat are not on the entity: they are counted
@@ -79,8 +81,9 @@ public class WantService {
 
     /**
      * Replaces the message and category, and the capacity if one is given.
-     * The owner never changes. Capacity can be raised but not lowered (400),
-     * so nobody loses a seat they hold. A new name or category tells the
+     * The owner never changes. Only an active want can be edited (409): a
+     * closed one is reopened first. Capacity can be raised but not lowered
+     * (400), so nobody loses a seat they hold. A new name or category tells the
      * lineup, with the old name when it changed; a capacity raise alone, or
      * saving with nothing changed, tells nobody.
      */
@@ -88,6 +91,10 @@ public class WantService {
     public WantResponse update(Long wantId, String message, Category category, Integer capacity,
             ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
+        requireNotCancelled(want);
+        if (want.getStatus() == WantStatus.CLOSED) {
+            throw new WantClosedException(wantId);
+        }
         if (capacity != null && capacity < want.getCapacity()) {
             throw new CapacityLoweredException(wantId, want.getCapacity(), capacity);
         }
@@ -111,9 +118,58 @@ public class WantService {
         return withSeats(saved, saved.getUser());
     }
 
+    /**
+     * Fixes the lineup: no more signups or withdrawals, and no edits until it
+     * is reopened. Tells the lineup, not the owner. Closing a closed want
+     * changes nothing and tells nobody; a cancelled one is a 409.
+     */
     @Transactional
-    public void delete(Long wantId, ClerkIdentity who) {
-        wantRepository.delete(requireOwned(wantId, who.clerkId()));
+    public WantResponse close(Long wantId, ClerkIdentity who) {
+        Want want = requireOwned(wantId, who.clerkId());
+        requireNotCancelled(want);
+        if (want.getStatus() == WantStatus.ACTIVE) {
+            want.close(Instant.now());
+            notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_CLOSED, null);
+        }
+        return withSeats(want, want.getUser());
+    }
+
+    /**
+     * Opens a closed want to signups and edits again, and tells the lineup.
+     * Reopening an active want changes nothing and tells nobody; a cancelled
+     * one is a 409.
+     */
+    @Transactional
+    public WantResponse reopen(Long wantId, ClerkIdentity who) {
+        Want want = requireOwned(wantId, who.clerkId());
+        requireNotCancelled(want);
+        if (want.getStatus() == WantStatus.CLOSED) {
+            want.reopen();
+            notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_REOPENED, null);
+        }
+        return withSeats(want, want.getUser());
+    }
+
+    /**
+     * Calls the want off, active or closed, and tells the lineup. This is
+     * what DELETE does: the row stays, with its lineup, so the notifications
+     * that point at it still have something to show. It leaves the feed.
+     * Cancelling twice tells nobody twice.
+     */
+    @Transactional
+    public void cancel(Long wantId, ClerkIdentity who) {
+        Want want = requireOwned(wantId, who.clerkId());
+        if (want.getStatus() != WantStatus.CANCELLED) {
+            want.cancel(Instant.now());
+            notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_CANCELLED, null);
+        }
+    }
+
+    /** Cancelling is final: nothing else may happen to the want afterwards. */
+    private static void requireNotCancelled(Want want) {
+        if (want.getStatus() == WantStatus.CANCELLED) {
+            throw new WantCancelledException(want.getId());
+        }
     }
 
     /** One want as `me` sees it. */

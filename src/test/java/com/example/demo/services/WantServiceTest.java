@@ -7,6 +7,7 @@ import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
 import com.example.demo.models.User;
 import com.example.demo.models.Want;
+import com.example.demo.models.WantStatus;
 import com.example.demo.repositories.WantRepository;
 import com.example.demo.repositories.WantSignupRepository;
 
@@ -99,11 +100,16 @@ class WantServiceTest {
     }
 
     @Test
-    void othersMayNotDeleteIt() {
-        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, dani)));
+    void onlyTheOwnerMayCloseReopenOrCancel() {
+        Want want = new Want("Ramen", Category.FOOD, dani);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
 
-        assertThatThrownBy(() -> wantService.delete(1L, MALLORY))
-                .isInstanceOf(WantForbiddenException.class);
+        assertThatThrownBy(() -> wantService.close(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
+        assertThatThrownBy(() -> wantService.reopen(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
+        assertThatThrownBy(() -> wantService.cancel(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
+
+        assertThat(want.getStatus()).isEqualTo(WantStatus.ACTIVE);
+        then(notificationService).shouldHaveNoInteractions();
         then(wantRepository).should(never()).delete(any());
     }
 
@@ -111,7 +117,7 @@ class WantServiceTest {
     void wantsWithoutAClerkOwnerAreReadOnly() {
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, legacy)));
 
-        assertThatThrownBy(() -> wantService.delete(1L, DANI))
+        assertThatThrownBy(() -> wantService.cancel(1L, DANI))
                 .isInstanceOf(WantForbiddenException.class);
     }
 
@@ -119,7 +125,7 @@ class WantServiceTest {
     void unknownWantIsNotFound() {
         given(wantRepository.findByIdForUpdate(99L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> wantService.delete(99L, DANI))
+        assertThatThrownBy(() -> wantService.cancel(99L, DANI))
                 .isInstanceOf(WantNotFoundException.class);
     }
 

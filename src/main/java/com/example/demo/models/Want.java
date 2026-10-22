@@ -1,5 +1,7 @@
 package com.example.demo.models;
 
+import java.time.Instant;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -33,6 +35,14 @@ public class Want {
     /** How many people the want takes, its owner included. Can be raised, never lowered. */
     @Column(nullable = false)
     private int capacity = 1;
+
+    /** When the owner fixed the lineup; null while it is open. Reopening clears it. */
+    @Column(name = "closed_at")
+    private Instant closedAt;
+
+    /** When the owner called it off; null unless cancelled. Final: nothing clears it. */
+    @Column(name = "cancelled_at")
+    private Instant cancelledAt;
 
     protected Want() {
     }
@@ -82,5 +92,25 @@ public class Want {
 
     public void setCapacity(int capacity) {
         this.capacity = capacity;
+    }
+
+    /** Cancelled outranks closed: a want closed and then cancelled is CANCELLED. */
+    public WantStatus getStatus() {
+        if (cancelledAt != null) {
+            return WantStatus.CANCELLED;
+        }
+        return closedAt != null ? WantStatus.CLOSED : WantStatus.ACTIVE;
+    }
+
+    public void close(Instant at) {
+        this.closedAt = at;
+    }
+
+    public void reopen() {
+        this.closedAt = null;
+    }
+
+    public void cancel(Instant at) {
+        this.cancelledAt = at;
     }
 }
