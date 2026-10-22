@@ -31,10 +31,29 @@ export interface Want {
   username: string
   /** The owner's Clerk profile picture; null for owners Clerk has told us nothing about, such as the seeded dani. */
   imageUrl: string | null
+  /** How many people the want is for, the owner included; at least 1. */
+  capacity: number
+  /** Seats taken, counting the owner. Full when seatsTaken >= capacity. */
+  seatsTaken: number
+  /** Whether you hold a seat; always true on your own wants. */
+  signedUp: boolean
 }
 
 /** The owner is whoever is signed in, so there is no userId. */
 export interface WantRequest {
   message: string
   category: Category
+  /** At least 1. Defaults to 1 on create; left out on update, it stays as it was. It can't be lowered. */
+  capacity?: number
+}
+
+/** What signing up or withdrawing returns: the want's seats after the change. */
+export interface SignupEventDetails {
+  wantId: number
+  message: string
+  capacity: number
+  seatsTaken: number
+  /** Usernames only, the owner included. */
+  lineup: string[]
+  signedUp: boolean
 }

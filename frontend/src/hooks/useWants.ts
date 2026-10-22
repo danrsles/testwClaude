@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createWant, deleteWant, listWants, updateWant } from '../api/wants'
+import { createWant, deleteWant, listWants, signUp, updateWant, withdraw } from '../api/wants'
 import type { Category, Want } from '../types/wants'
 
 function messageOf(e: unknown): string {
@@ -12,14 +12,17 @@ export interface UseWants {
   error: string | null
   refresh: () => Promise<void>
   /** Each mutation resolves true on success, false if the API rejected it. */
-  add: (message: string, category: Category) => Promise<boolean>
-  update: (id: number, message: string, category: Category) => Promise<boolean>
+  add: (message: string, category: Category, capacity: number) => Promise<boolean>
+  /** Leaving capacity out keeps it as it is. */
+  update: (id: number, message: string, category: Category, capacity?: number) => Promise<boolean>
   remove: (id: number) => Promise<boolean>
+  signUp: (id: number) => Promise<boolean>
+  withdraw: (id: number) => Promise<boolean>
 }
 
 /**
  * Owns everything about wants that lives on the server: the cached list, its
- * loading and error state, and the four operations that change it. Components
+ * loading and error state, and the operations that change it. Components
  * keep only their own UI state.
  *
  * Refetches whenever `filter` changes, and after every successful mutation.
@@ -74,17 +77,26 @@ export function useWants(filter: Category | ''): UseWants {
   )
 
   const add = useCallback(
-    (message: string, category: Category) => mutate(() => createWant({ message, category })),
+    (message: string, category: Category, capacity: number) =>
+      mutate(() => createWant({ message, category, capacity })),
     [mutate],
   )
 
   const update = useCallback(
-    (id: number, message: string, category: Category) =>
-      mutate(() => updateWant(id, { message, category })),
+    (id: number, message: string, category: Category, capacity?: number) =>
+      mutate(() =>
+        updateWant(id, capacity === undefined ? { message, category } : { message, category, capacity }),
+      ),
     [mutate],
   )
 
   const remove = useCallback((id: number) => mutate(() => deleteWant(id)), [mutate])
 
-  return { wants, loading, error, refresh, add, update, remove }
+  // The list is reloaded afterwards, so the seats shown come from the feed
+  // rather than from the details these return.
+  const join = useCallback((id: number) => mutate(() => signUp(id)), [mutate])
+
+  const leave = useCallback((id: number) => mutate(() => withdraw(id)), [mutate])
+
+  return { wants, loading, error, refresh, add, update, remove, signUp: join, withdraw: leave }
 }

@@ -15,14 +15,21 @@ const TAG: Record<Category, string> = {
   TRIP: 'bg-trip',
 }
 
+/** A whole number of at least `min`, or null for anything else in the field. */
+function seats(text: string, min: number): number | null {
+  const n = Number(text)
+  return Number.isInteger(n) && n >= min ? n : null
+}
+
 /**
  * The whole wants screen: the add form, the category filter, and the list,
- * where the signed-in user's own rows are editable in place. Server state comes
- * from useWants; everything held here is UI state belonging to this screen.
+ * where the signed-in user's own rows are editable in place and everyone
+ * else's can be signed up for. Server state comes from useWants; everything
+ * held here is UI state belonging to this screen.
  */
 export default function Wants() {
   const [filter, setFilter] = useState<Category | ''>('')
-  const { wants, loading, error, refresh, add, update, remove } = useWants(filter)
+  const { wants, loading, error, refresh, add, update, remove, signUp, withdraw } = useWants(filter)
   // Your picture beside your wants comes from the API, so reload the list as
   // soon as you change it in Clerk's account menu.
   useOnPictureChange(refresh)
@@ -33,22 +40,33 @@ export default function Wants() {
 
   const [message, setMessage] = useState('')
   const [category, setCategory] = useState<Category>('FOOD')
+  // Kept as typed, so the field can be cleared on the way to a new number.
+  const [capacity, setCapacity] = useState('1')
   const [editingId, setEditingId] = useState<number | null>(null)
   const [draft, setDraft] = useState('')
+  const [draftCapacity, setDraftCapacity] = useState('')
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     const text = message.trim()
-    if (!text) return
-    // Only clear the input if the API accepted it, so a failure keeps the text.
-    if (await add(text, category)) setMessage('')
+    const count = seats(capacity, 1)
+    if (!text || count === null) return
+    // Only clear the inputs if the API accepted them, so a failure keeps them.
+    if (await add(text, category, count)) {
+      setMessage('')
+      setCapacity('1')
+    }
   }
 
   async function saveEdit(want: Want) {
     const text = draft.trim()
-    if (!text) return
+    // The API refuses to lower the capacity, so the field goes no lower either.
+    const count = seats(draftCapacity, want.capacity)
+    if (!text || count === null) return
+    // Send the capacity only when it changed; left out, it stays as it is.
+    const raised = count === want.capacity ? undefined : count
     // Leave the row open on failure so the edit is not silently lost.
-    if (await update(want.id, text, want.category)) setEditingId(null)
+    if (await update(want.id, text, want.category, raised)) setEditingId(null)
   }
 
   return (
@@ -79,9 +97,18 @@ export default function Wants() {
             </option>
           ))}
         </select>
+        <input
+          type="number"
+          min={1}
+          value={capacity}
+          onChange={(e) => setCapacity(e.target.value)}
+          aria-label="Capacity"
+          title="How many people, you included"
+          className="field w-20 px-3 py-2"
+        />
         <button
           type="submit"
-          disabled={!message.trim()}
+          disabled={!message.trim() || seats(capacity, 1) === null}
           className="btn-primary px-5 py-2"
         >
           Add
@@ -136,17 +163,29 @@ export default function Wants() {
               </span>
 
               {editingId === want.id ? (
-                <input
-                  value={draft}
-                  autoFocus
-                  onChange={(e) => setDraft(e.target.value)}
+                <span
+                  className="flex flex-1 basis-40 gap-1.5"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') saveEdit(want)
                     if (e.key === 'Escape') setEditingId(null)
                   }}
-                  aria-label="Edit want"
-                  className="field flex-1 basis-40 px-2 py-1"
-                />
+                >
+                  <input
+                    value={draft}
+                    autoFocus
+                    onChange={(e) => setDraft(e.target.value)}
+                    aria-label="Edit want"
+                    className="field min-w-0 flex-1 px-2 py-1"
+                  />
+                  <input
+                    type="number"
+                    min={want.capacity}
+                    value={draftCapacity}
+                    onChange={(e) => setDraftCapacity(e.target.value)}
+                    aria-label="Edit capacity"
+                    className="field w-16 px-2 py-1"
+                  />
+                </span>
               ) : (
                 <span className="flex-1 basis-40">{want.message}</span>
               )}
@@ -155,6 +194,10 @@ export default function Wants() {
               <span className="flex items-center gap-1.5 text-sm text-stone-500 dark:text-stone-400">
                 <Avatar src={want.imageUrl} alt="" size={24} />
                 {want.username}
+              </span>
+
+              <span className="text-sm text-stone-500 tabular-nums dark:text-stone-400">
+                {want.seatsTaken} / {want.capacity} seats
               </span>
 
               <span className="ml-auto flex gap-1.5">
@@ -190,6 +233,7 @@ export default function Wants() {
                       onClick={() => {
                         setEditingId(want.id)
                         setDraft(want.message)
+                        setDraftCapacity(String(want.capacity))
                       }}
                       className="btn px-2.5 py-1.5 text-sm"
                     >
@@ -202,7 +246,26 @@ export default function Wants() {
                       Delete
                     </button>
                   </>
-                ) : null}
+                ) : want.signedUp ? (
+                  <button onClick={() => withdraw(want.id)} className="btn px-2.5 py-1.5 text-sm">
+                    Withdraw
+                  </button>
+                ) : (
+                  <>
+                    {want.seatsTaken >= want.capacity && (
+                      <span className="self-center text-sm font-medium text-stone-500 dark:text-stone-400">
+                        Full
+                      </span>
+                    )}
+                    <button
+                      onClick={() => signUp(want.id)}
+                      disabled={want.seatsTaken >= want.capacity}
+                      className="btn-primary px-2.5 py-1.5 text-sm"
+                    >
+                      Sign up
+                    </button>
+                  </>
+                )}
               </span>
             </li>
           ))}

@@ -89,6 +89,12 @@ Which user the app acts as comes from the token, so no component passes a user i
 
 `Wants.tsx` shows edit controls only on rows where `want.userId` matches `me.id`, but that is cosmetic: the API returns 403 regardless. It names each owner by `want.username`, beside `<Avatar src={want.imageUrl} alt="" size={24} />`. The alt is empty because the username already names the person.
 
+**Signups in the UI.** Each row shows `seatsTaken / capacity seats`. Other people's rows get **Sign up**, or **Withdraw** when `want.signedUp`; full (`seatsTaken >= capacity`) disables Sign up and shows "Full". Your own rows get neither, as you always hold a seat.
+- `useWants` exposes `signUp` and `withdraw` through the same `mutate` as the rest, so both reload the list and a 409 (someone took the last seat) lands in the error alert. The feed, not the `SignupEventDetails` they return, is what the screen shows.
+- The capacity fields hold the typed text, so they can be cleared on the way to a new number; `seats()` turns it into a whole number or null, and null disables Add or Save.
+- Editing offers capacity with `min={want.capacity}`, since the API refuses to lower it, and `saveEdit` sends `capacity` only when it changed. Left out, the API keeps it.
+- `Notifications.tsx`'s `describe()` needs a case for every `NotificationType`, or that type's rows show a name and nothing else. `who()` says "You" for `WANT_CREATED`, whose actor is you.
+
 **Picture changes show at once.** The API learns your picture only from the session token, which Clerk otherwise reissues about once a minute. `Wants` therefore calls `useOnPictureChange(refresh)`:
 - The hook watches `useUser().user.imageUrl`. Clerk updates it in the page as soon as you change your picture in its menu.
 - On a change, it calls Clerk's standalone `getToken({ skipCache: true })`, which mints and caches a new token, then calls `refresh`. The reload's `GET /wants` carries that token, and the API syncs your row before listing (see `WantService.findAll`).

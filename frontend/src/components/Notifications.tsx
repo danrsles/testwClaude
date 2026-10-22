@@ -19,10 +19,27 @@ function timeAgo(iso: string, now: number): string {
   return relative.format(Math.round(hours / 24), 'day')
 }
 
+/** Who did it: the actor's username, or "You" for a want you created. */
+function who(n: Notification): string {
+  return n.type === 'WANT_CREATED' ? 'You' : n.actor.username
+}
+
+/** What they did, to follow who(). Every type needs a case, or its rows say nothing. */
 function describe(n: Notification): string {
+  const want = `'${n.wantMessage}'`
   switch (n.type) {
     case 'FOLLOW':
       return 'started following you'
+    case 'WANT_CREATED':
+      return `created ${want}`
+    case 'WANT_SIGNUP':
+      return `signed up for ${want}`
+    case 'WANT_WITHDRAWN':
+      return `withdrew from ${want}`
+    case 'WANT_UPDATED':
+      return n.previousMessage === null
+        ? `updated ${want}`
+        : `renamed '${n.previousMessage}' to ${want}`
   }
 }
 
@@ -53,7 +70,7 @@ export default function Notifications() {
       <title>Notifications · Wants</title>
       <h1 className="text-3xl font-semibold tracking-tight">Notifications</h1>
       <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">
-        Who followed you. New ones turn up here within half a minute.
+        Follows, signups on your wants, and changes to wants you're in. New ones turn up here within half a minute.
       </p>
 
       {error && (
@@ -86,7 +103,7 @@ export default function Notifications() {
                 <Avatar src={n.actor.imageUrl} alt="" size={32} />
                 <p className="min-w-0 flex-1">
                   {isNew && <span className="sr-only">New: </span>}
-                  <span className="font-medium">{n.actor.username}</span> {describe(n)}
+                  <span className="font-medium">{who(n)}</span> {describe(n)}
                 </p>
                 <time dateTime={n.createdAt} className="shrink-0 text-sm text-stone-500 dark:text-stone-400">
                   {timeAgo(n.createdAt, fetchedAt)}
