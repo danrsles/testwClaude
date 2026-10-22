@@ -34,7 +34,7 @@ public interface WantRepository extends JpaRepository<Want, Long> {
 
     /** Whether a want is in a user's feed: theirs, or by someone they follow. */
     @Query("""
-            select count(w) > 0 from Want w
+            select case when count(w) > 0 then true else false end from Want w
             where w.id = :wantId
               and (w.user.id = :userId
                    or w.user.id in (select f.followee.id from Follow f where f.follower.id = :userId))""")

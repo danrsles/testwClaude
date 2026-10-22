@@ -35,7 +35,7 @@ public class NotificationService {
     /** As notify, about a want, whose current message the notification keeps. Joins the caller's transaction. */
     @Transactional
     public void notify(Long recipientId, User actor, NotificationType type, Long wantId) {
-        throw new UnsupportedOperationException("not built yet");
+        notificationRepository.notifyAboutWant(recipientId, actor.getId(), type.name(), wantId);
     }
 
     /**
@@ -45,7 +45,7 @@ public class NotificationService {
      */
     @Transactional
     public void notifyLineup(Long wantId, User actor, NotificationType type, String previousMessage) {
-        throw new UnsupportedOperationException("not built yet");
+        notificationRepository.notifyLineup(wantId, actor.getId(), type.name(), previousMessage);
     }
 
     /** Your 50 newest notifications, newest first, read or not. */

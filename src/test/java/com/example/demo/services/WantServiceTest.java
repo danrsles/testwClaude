@@ -71,7 +71,7 @@ class WantServiceTest {
     void ownerMayUpdateTheirWant() {
         Want want = new Want("Ramen", Category.FOOD, dani);
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
-        given(wantRepository.save(want)).willReturn(want);
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
 
         WantResponse updated = wantService.update(1L, "Pho", Category.FOOD, null, DANI);
 
@@ -85,7 +85,7 @@ class WantServiceTest {
 
         assertThatThrownBy(() -> wantService.update(1L, "Mine now", Category.FOOD, null, MALLORY))
                 .isInstanceOf(WantForbiddenException.class);
-        then(wantRepository).should(never()).save(any());
+        then(wantRepository).should(never()).saveAndFlush(any());
     }
 
     @Test
@@ -95,7 +95,7 @@ class WantServiceTest {
 
         assertThatThrownBy(() -> wantService.update(1L, "Pizza", Category.FOOD, 2, DANI))
                 .isInstanceOf(CapacityLoweredException.class);
-        then(wantRepository).should(never()).save(any());
+        then(wantRepository).should(never()).saveAndFlush(any());
     }
 
     @Test
