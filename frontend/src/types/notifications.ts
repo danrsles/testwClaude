@@ -1,5 +1,5 @@
-/** What a notification is about. Only follows so far; signups on wants come next. */
-export type NotificationType = 'FOLLOW'
+/** What a notification is about. WANT_CREATED is sent to yourself, so its actor is you. */
+export type NotificationType = 'FOLLOW' | 'WANT_CREATED' | 'WANT_SIGNUP' | 'WANT_WITHDRAWN' | 'WANT_UPDATED'
 
 /** Someone who did something you are told about: public fields only. */
 export interface Actor {
@@ -17,4 +17,10 @@ export interface Notification {
   /** ISO 8601, in UTC. */
   createdAt: string
   read: boolean
+  /** The want it is about; null for FOLLOW. */
+  wantId: number | null
+  /** The want's message when the notification was sent; null for FOLLOW. */
+  wantMessage: string | null
+  /** On WANT_UPDATED, the message before a rename; null when the name didn't change. */
+  previousMessage: string | null
 }

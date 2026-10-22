@@ -1,10 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getToken } from '@clerk/react'
 import { getMe } from '../api/me'
-import { createWant, deleteWant, listWants, updateWant } from '../api/wants'
+import { createWant, deleteWant, listWants, signUp, updateWant, withdraw } from '../api/wants'
 import placeholder from '../assets/avatar-placeholder.svg'
 import MeProvider from '../hooks/MeProvider'
 import type { Category, User, Want } from '../types/wants'
@@ -18,6 +18,8 @@ vi.mock('../api/wants', () => ({
   createWant: vi.fn(),
   updateWant: vi.fn(),
   deleteWant: vi.fn(),
+  signUp: vi.fn(),
+  withdraw: vi.fn(),
 }))
 
 vi.mock('../api/me', () => ({ getMe: vi.fn() }))
@@ -36,8 +38,23 @@ vi.mock('@clerk/react', () => ({
 const DANI: User = { id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null, imageUrl: null }
 const SAM: User = { id: 2, username: 'sam', clerkId: 'user_sam', email: null, lastSignInAt: null, imageUrl: 'https://img.clerk.com/sam.jpg' }
 
-function want(id: number, message: string, category: Category = 'FOOD', owner = DANI): Want {
-  return { id, message, category, userId: owner.id, username: owner.username, imageUrl: owner.imageUrl }
+// A want for one with only its owner seated, unless `seats` says otherwise.
+function want(
+  id: number,
+  message: string,
+  category: Category = 'FOOD',
+  owner = DANI,
+  seats: Partial<Pick<Want, 'capacity' | 'seatsTaken' | 'signedUp'>> = {},
+): Want {
+  return {
+    id, message, category, userId: owner.id, username: owner.username, imageUrl: owner.imageUrl,
+    capacity: 1, seatsTaken: 1, signedUp: owner === DANI, ...seats,
+  }
+}
+
+/** The list item holding a want's message. */
+function row(message: string): HTMLElement {
+  return screen.getByText(message).closest('li')!
 }
 
 // Wants reads the signed-in user from useMe, so it renders inside the
@@ -91,7 +108,7 @@ describe('Wants', () => {
     await userEvent.type(input, 'Tacos')
     await userEvent.click(screen.getByRole('button', { name: 'Add' }))
 
-    expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD' })
+    expect(createWant).toHaveBeenCalledWith(expect.objectContaining({ message: 'Tacos', category: 'FOOD' }))
     await waitFor(() => expect(input).toHaveValue(''))
   })
 
@@ -180,6 +197,158 @@ describe('Wants', () => {
     // Decorative: the username beside each picture already names the owner.
     const pictures = screen.getAllByRole('presentation')
     expect(pictures.map((img) => img.getAttribute('src'))).toEqual([placeholder, 'https://img.clerk.com/sam.jpg'])
+  })
+
+  it('creates a want with the capacity entered', async () => {
+    vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos', 'FOOD', DANI, { capacity: 4 }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+    const capacity = screen.getByLabelText('Capacity')
+    await userEvent.clear(capacity)
+    await userEvent.type(capacity, '4')
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD', capacity: 4 })
+  })
+
+  it('creates a want for one when the capacity is left alone', async () => {
+    vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos'))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    expect(screen.getByLabelText('Capacity')).toHaveValue(1)
+    await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD', capacity: 1 })
+  })
+
+  it('shows seats taken out of capacity on each row', async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 4, seatsTaken: 2 }),
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 3, seatsTaken: 3 }),
+    ])
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    expect(within(row('Ramen downtown')).getByText('2 / 4 seats')).toBeInTheDocument()
+    expect(within(row('Dune Part Two')).getByText('3 / 3 seats')).toBeInTheDocument()
+  })
+
+  it('saves a raised capacity when editing', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 4, seatsTaken: 2 })])
+    vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 6, seatsTaken: 2 }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    const capacity = screen.getByLabelText('Edit capacity')
+    await userEvent.clear(capacity)
+    await userEvent.type(capacity, '6')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'FOOD', capacity: 6 })
+  })
+
+  it('does not offer a capacity below the current one when editing', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 4, seatsTaken: 2 })])
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+
+    // The API rejects lowering it with a 400, so the field starts where it is and goes no lower.
+    const capacity = screen.getByLabelText('Edit capacity')
+    expect(capacity).toHaveValue(4)
+    expect(capacity).toHaveAttribute('min', '4')
+  })
+
+  it("offers Sign up on other people's wants, but not on your own", async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 4 }),
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4 }),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    // You already hold the seat on your own want, and can't give it up.
+    expect(within(row('Dune Part Two')).getByRole('button', { name: 'Sign up' })).toBeEnabled()
+    expect(within(row('Ramen downtown')).queryByRole('button', { name: 'Sign up' })).not.toBeInTheDocument()
+    expect(within(row('Ramen downtown')).queryByRole('button', { name: 'Withdraw' })).not.toBeInTheDocument()
+  })
+
+  it('signs up and reloads the list', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4 })])
+    vi.mocked(signUp).mockResolvedValue({
+      wantId: 2, message: 'Dune Part Two', capacity: 4, seatsTaken: 2, lineup: ['sam', 'dani'], signedUp: true,
+    })
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign up' }))
+
+    expect(signUp).toHaveBeenCalledWith(2)
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it("offers Withdraw instead of Sign up once you're in", async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4, seatsTaken: 2, signedUp: true }),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(screen.getByRole('button', { name: 'Withdraw' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Sign up' })).not.toBeInTheDocument()
+  })
+
+  it('withdraws and reloads the list', async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4, seatsTaken: 2, signedUp: true }),
+    ])
+    vi.mocked(withdraw).mockResolvedValue({
+      wantId: 2, message: 'Dune Part Two', capacity: 4, seatsTaken: 1, lineup: ['sam'], signedUp: false,
+    })
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw' }))
+
+    expect(withdraw).toHaveBeenCalledWith(2)
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it('disables Sign up when the want is full', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 2, seatsTaken: 2 })])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(screen.getByRole('button', { name: 'Sign up' })).toBeDisabled()
+    expect(within(row('Dune Part Two')).getByText('Full')).toBeInTheDocument()
+  })
+
+  it("still offers Withdraw on a full want you're in", async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 2, seatsTaken: 2, signedUp: true }),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(screen.getByRole('button', { name: 'Withdraw' })).toBeEnabled()
+  })
+
+  it('shows why signing up failed', async () => {
+    // Someone took the last seat after the list loaded: the API answers 409.
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 2 })])
+    vi.mocked(signUp).mockRejectedValue(new Error('This want is full'))
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign up' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('This want is full')
   })
 
   it('reloads the list with a fresh token when you change your picture in Clerk', async () => {

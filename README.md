@@ -92,6 +92,8 @@ The dev server proxies `/api/*` to port 8080, so the browser stays on one origin
 
 A signed-out visitor sees only Clerk's sign-in form, which also offers sign-up. Once signed in, the app has two screens, linked from the nav at the top: the wants list at `/` and an about page at `/info`. The header also holds Clerk's account menu, the only account control: it changes your profile picture, username and email, and signs you out.
 - **Wants** show each owner's username and Clerk profile picture: their photo, or Clerk's silhouette if they haven't set one.
+- **Each want is for a number of people**, set when you add it (1 unless you change it) and raised later with Edit; it can't be lowered. Every row shows its seats taken, such as "2 / 4 seats". Other people's wants have a **Sign up** button, which becomes **Withdraw** once you're in; when every seat is taken it is disabled and the row says "Full". Your own wants have neither, since you always hold a seat on them.
+- **Notifications** say what happened in a sentence: "alex signed up for 'Pizza Friday'", "You created 'Pizza Friday'", or "sam renamed 'Pizza Friday' to 'Pizza Saturday'".
 - **Everything about you comes from Clerk.** The app has no profile page of its own and nothing to edit about yourself.
 
 ## Login

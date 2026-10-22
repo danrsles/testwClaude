@@ -7,7 +7,7 @@ import { getMe } from '../api/me'
 import { listNotifications, markNotificationsRead } from '../api/notifications'
 import MeProvider from '../hooks/MeProvider'
 import { POLL_MS } from '../hooks/useNotifications'
-import type { Notification } from '../types/notifications'
+import type { Notification, NotificationType } from '../types/notifications'
 import Notifications from './Notifications'
 import NotificationsBell from './NotificationsBell'
 
@@ -26,7 +26,20 @@ function followedBy(id: number, username: string, read = false): Notification {
     actor: { id: id + 100, username, imageUrl: null },
     createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
     read,
+    wantId: null,
+    wantMessage: null,
+    previousMessage: null,
   }
+}
+
+/** A notification about the want 'Pizza Friday', from `username`. */
+function aboutWant(
+  type: NotificationType,
+  username: string,
+  wantMessage = 'Pizza Friday',
+  previousMessage: string | null = null,
+): Notification {
+  return { ...followedBy(1, username, true), type, wantId: 7, wantMessage, previousMessage }
 }
 
 /**
@@ -161,6 +174,46 @@ describe('Notifications', () => {
     // The refetch after the failure brings it back unread; the bell says so.
     expect(await screen.findByRole('link', { name: 'Notifications, 1 unread' })).toBeInTheDocument()
     expect(markNotificationsRead).toHaveBeenCalledTimes(1)
+  })
+
+  it('says you created a want, without naming you', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_CREATED', 'dani')])
+    renderAt('/notifications')
+
+    const item = await screen.findByRole('listitem')
+    expect(item).toHaveTextContent("You created 'Pizza Friday'")
+    expect(item).not.toHaveTextContent('dani')
+  })
+
+  it('says who signed up for which want', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_SIGNUP', 'alex')])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("alex signed up for 'Pizza Friday'")
+  })
+
+  it('says who withdrew from which want', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_WITHDRAWN', 'alex')])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("alex withdrew from 'Pizza Friday'")
+  })
+
+  it('shows a rename with the old and new names', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([
+      aboutWant('WANT_UPDATED', 'sam', 'Pizza Saturday', 'Pizza Friday'),
+    ])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("sam renamed 'Pizza Friday' to 'Pizza Saturday'")
+  })
+
+  it("shows an edit that kept the name by the want's name", async () => {
+    // A change of category only: the name is the same, so there is no previous one.
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_UPDATED', 'sam')])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("sam updated 'Pizza Friday'")
   })
 
   it('goes to the page from the bell', async () => {
