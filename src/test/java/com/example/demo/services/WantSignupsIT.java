@@ -508,20 +508,6 @@ class WantSignupsIT {
         assertThat(seats(pizza)).isEqualTo(1);
     }
 
-    @Test
-    void deletingAWantWithSignupsStillWorks() {
-        ClerkIdentity dani = person("dani");
-        ClerkIdentity alex = follower("alex", dani);
-        Long pizza = want(dani, "Pizza Friday", 4);
-        signupService.signUp(pizza, alex);
-
-        wantService.delete(pizza, dani);
-
-        assertThat(seats(pizza)).isZero();
-        assertThat(jdbc.queryForObject("select count(*) from notifications where want_id = ?", Integer.class, pizza))
-                .isZero();
-    }
-
     /** V12 seats the owner of every want that existed before signups: here, the seeded ones. */
     @Test
     void existingWantsHaveCapacityOneAndTheirOwnerSeated() {

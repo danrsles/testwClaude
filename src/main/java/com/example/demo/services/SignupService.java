@@ -6,6 +6,7 @@ import com.example.demo.dto.SignupEventDetails;
 import com.example.demo.models.NotificationType;
 import com.example.demo.models.User;
 import com.example.demo.models.Want;
+import com.example.demo.models.WantStatus;
 import com.example.demo.repositories.WantRepository;
 import com.example.demo.repositories.WantSignupRepository;
 
@@ -41,14 +42,16 @@ public class SignupService {
     /**
      * Takes a seat and tells the owner. Already holding one, as the owner
      * always does, changes nothing, even on a full want. 404 for a want that
-     * is not in your feed, 409 when every seat is taken.
+     * is not in your feed, 409 when every seat is taken or the want is not
+     * active.
      */
     @Transactional
     public SignupEventDetails signUp(Long wantId, ClerkIdentity who) {
         User me = userService.current(who);
         Want want = lock(wantId);
+        requireActive(want, me);
 
-        // Before the other checks, so repeating a signup is never an error.
+        // Before the other checks, so repeating a signup on an active want is never an error, even when full.
         if (wantSignupRepository.existsByWantIdAndUserId(wantId, me.getId())) {
             return details(want, me);
         }
@@ -67,14 +70,16 @@ public class SignupService {
 
     /**
      * Gives up your seat and tells the owner; not holding one changes
-     * nothing. The owner cannot withdraw (400): that would be cancelling. A
-     * member can always withdraw, even after unfollowing the owner; anyone
-     * else gets 404 for a want that is not in their feed.
+     * nothing. Only an active want can be withdrawn from (409 otherwise). The
+     * owner cannot withdraw (400): that would be cancelling. A member can
+     * always withdraw, even after unfollowing the owner; anyone else gets 404
+     * for a want that is not in their feed.
      */
     @Transactional
     public SignupEventDetails withdraw(Long wantId, ClerkIdentity who) {
         User me = userService.current(who);
         Want want = lock(wantId);
+        requireActive(want, me);
 
         if (want.getUser().getId().equals(me.getId())) {
             throw new OwnerCannotWithdrawException(wantId);
@@ -91,9 +96,29 @@ public class SignupService {
         return wantRepository.findByIdForUpdate(wantId).orElseThrow(() -> new WantNotFoundException(wantId));
     }
 
+    /**
+     * Only an active want's lineup can change, whoever asks and whether or
+     * not they hold a seat (409). Someone who cannot see the want, being
+     * neither in its lineup nor its owner's follower, gets 404 instead, so
+     * the 409 never reveals that it exists. A cancelled want has left the
+     * feed, so only its lineup can still see it.
+     */
+    private void requireActive(Want want, User me) {
+        if (want.getStatus() == WantStatus.ACTIVE) {
+            return;
+        }
+        if (!wantSignupRepository.existsByWantIdAndUserId(want.getId(), me.getId())
+                && !wantRepository.isInFeed(want.getId(), me.getId())) {
+            throw new WantNotFoundException(want.getId());
+        }
+        throw want.getStatus() == WantStatus.CANCELLED
+                ? new WantCancelledException(want.getId())
+                : new WantClosedException(want.getId());
+    }
+
     private SignupEventDetails details(Want want, User me) {
         List<String> lineup = wantSignupRepository.findLineupUsernames(want.getId());
         return new SignupEventDetails(want.getId(), want.getMessage(), want.getCapacity(), lineup.size(), lineup,
-                lineup.contains(me.getUsername()));
+                lineup.contains(me.getUsername()), want.getStatus());
     }
 }

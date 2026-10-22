@@ -243,16 +243,54 @@ class WantControllerTest {
     }
 
     @Test
-    void deletesWant() throws Exception {
+    void deletingCancelsTheWant() throws Exception {
         mockMvc.perform(delete("/wants/1").with(signedInAsDani()))
                 .andExpect(status().isNoContent());
 
-        then(wantService).should().delete(1L, DANI);
+        then(wantService).should().cancel(1L, DANI);
+    }
+
+    @Test
+    void feedShowsEachWantsStatus() throws Exception {
+        Want closed = new Want("Pizza Friday", Category.FOOD, dani, 4);
+        closed.close(Instant.parse("2026-10-22T18:00:00Z"));
+        given(wantService.findAll(DANI)).willReturn(List.of(
+                seated(new Want("Ramen downtown", Category.FOOD, dani)), seated(closed)));
+
+        mockMvc.perform(get("/wants").with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].status").value("ACTIVE"))
+                .andExpect(jsonPath("$[1].status").value("CLOSED"));
+    }
+
+    @Test
+    void closeAndReopenReturnTheWantWithItsStatus() throws Exception {
+        Want closed = new Want("Pizza Friday", Category.FOOD, dani, 4);
+        closed.close(Instant.parse("2026-10-22T18:00:00Z"));
+        given(wantService.close(1L, DANI)).willReturn(seated(closed));
+        given(wantService.reopen(1L, DANI)).willReturn(seated(new Want("Pizza Friday", Category.FOOD, dani, 4)));
+
+        mockMvc.perform(post("/wants/1/close").with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Pizza Friday"))
+                .andExpect(jsonPath("$.status").value("CLOSED"));
+        mockMvc.perform(post("/wants/1/reopen").with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+    }
+
+    @Test
+    void closeReopenWithoutATokenAreUnauthorized() throws Exception {
+        mockMvc.perform(post("/wants/1/close")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/wants/1/reopen")).andExpect(status().isUnauthorized());
+
+        then(wantService).should(never()).close(any(), any());
+        then(wantService).should(never()).reopen(any(), any());
     }
 
     @Test
     void deletingUnknownWantIsNotFound() throws Exception {
-        BDDMockito.willThrow(new WantNotFoundException(99L)).given(wantService).delete(99L, DANI);
+        BDDMockito.willThrow(new WantNotFoundException(99L)).given(wantService).cancel(99L, DANI);
 
         mockMvc.perform(delete("/wants/99").with(signedInAsDani()))
                 .andExpect(status().isNotFound());
@@ -260,7 +298,7 @@ class WantControllerTest {
 
     @Test
     void deletingSomeoneElsesWantIsForbidden() throws Exception {
-        BDDMockito.willThrow(new WantForbiddenException(2L)).given(wantService).delete(2L, DANI);
+        BDDMockito.willThrow(new WantForbiddenException(2L)).given(wantService).cancel(2L, DANI);
 
         mockMvc.perform(delete("/wants/2").with(signedInAsDani()))
                 .andExpect(status().isForbidden());

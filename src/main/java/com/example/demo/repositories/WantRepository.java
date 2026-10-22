@@ -15,11 +15,12 @@ import org.springframework.data.repository.query.Param;
 
 public interface WantRepository extends JpaRepository<Want, Long> {
 
-    /** A user's feed: their own wants and those of everyone they follow. */
+    /** A user's feed: their own wants and those of everyone they follow, never cancelled ones. */
     @Query("""
             select w from Want w
-            where w.user.id = :userId
-               or w.user.id in (select f.followee.id from Follow f where f.follower.id = :userId)
+            where w.cancelledAt is null
+              and (w.user.id = :userId
+                   or w.user.id in (select f.followee.id from Follow f where f.follower.id = :userId))
             order by w.id""")
     List<Want> findFeed(@Param("userId") Long userId);
 
@@ -27,15 +28,17 @@ public interface WantRepository extends JpaRepository<Want, Long> {
     @Query("""
             select w from Want w
             where w.category = :category
+              and w.cancelledAt is null
               and (w.user.id = :userId
                    or w.user.id in (select f.followee.id from Follow f where f.follower.id = :userId))
             order by w.id""")
     List<Want> findFeedByCategory(@Param("userId") Long userId, @Param("category") Category category);
 
-    /** Whether a want is in a user's feed: theirs, or by someone they follow. */
+    /** Whether a want is in a user's feed: theirs, or by someone they follow, and not cancelled. */
     @Query("""
             select case when count(w) > 0 then true else false end from Want w
             where w.id = :wantId
+              and w.cancelledAt is null
               and (w.user.id = :userId
                    or w.user.id in (select f.followee.id from Follow f where f.follower.id = :userId))""")
     boolean isInFeed(@Param("wantId") Long wantId, @Param("userId") Long userId);

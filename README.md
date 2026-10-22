@@ -128,7 +128,7 @@ Browser ── signs in through Clerk's widget ──► Clerk
   - If the name is already taken in our table, for example by the seeded `dani`, the user keeps their current one rather than getting an error.
   - A missing email or sign-in claim never erases a stored value.
 - **Email stays private.** It sits on `users`, but the API never returns another user's `User`: wants come back as `{id, message, category, userId, username}`, and only `GET /me` shows you your own email. `users.email` is the address to use for notifications.
-- **The owner always comes from the token.** Request bodies no longer carry a `userId`; one sent anyway is ignored. You see your own wants and those of people you follow, but only a want's owner can change or delete it (`403` otherwise). Your own record is reachable only as `/me`, and there is no route to anyone else's, so nobody can read another user's email.
+- **The owner always comes from the token.** Request bodies no longer carry a `userId`; one sent anyway is ignored. You see your own wants and those of people you follow, but only a want's owner can change, close, reopen or cancel it (`403` otherwise). Your own record is reachable only as `/me`, and there is no route to anyone else's, so nobody can read another user's email.
 - **`azp` is checked.** Clerk records the page origin that requested each token in `azp`. The API accepts only its own origins: `http://localhost:5173` locally, the CloudFront URL in production. That stops a token issued to another site on the same Clerk instance being replayed here.
 - **No cookies, no CSRF.** The API is stateless and reads credentials only from the `Authorization` header, which a cross-site form cannot set, so CSRF protection is off.
 - **The seeded `dani` has no Clerk account**, nor do the test users `alex`, `sam` and `jordan`. Their wants show only to people who follow them, and can be edited by no one. To claim them, sign in once, then in the database set `dani`'s `clerk_id` to your Clerk user id (shown in the Clerk dashboard, or by `GET /me`) and delete the user row your first sign-in created.
@@ -157,13 +157,22 @@ Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/wants` | — | `200` your wants and those of people you follow, each `{id, message, category, userId, username, imageUrl, capacity, seatsTaken, signedUp}` | `400` unknown `?category=` |
+| `GET` | `/wants` | — | `200` your wants and those of people you follow, each `{id, message, category, userId, username, imageUrl, capacity, seatsTaken, signedUp, status}`; cancelled wants are left out | `400` unknown `?category=` |
 | `GET` | `/wants?category=FOOD` | — | `200` filtered list | `400` unknown or lowercase value |
 | `POST` | `/wants` | `{message, category, capacity?}` | `201` created want, owned by you, with you in its first seat | `400` invalid body or `capacity` below 1 |
-| `PUT` | `/wants/{id}` | `{message, category, capacity?}` | `200` updated want; leaving out `capacity` keeps it | `400` invalid body or capacity lowered, `403` not yours, `404` unknown want |
-| `DELETE` | `/wants/{id}` | — | `204` no content | `403` not yours, `404` unknown want |
+| `PUT` | `/wants/{id}` | `{message, category, capacity?}` | `200` updated want; leaving out `capacity` keeps it | `400` invalid body or capacity lowered, `403` not yours, `404` unknown want, `409` closed or cancelled |
+| `POST` | `/wants/{id}/close` | — | `200` the want, now `CLOSED`; closing again changes nothing | `403` not yours, `404` unknown want, `409` cancelled |
+| `POST` | `/wants/{id}/reopen` | — | `200` the want, `ACTIVE` again; reopening an active want changes nothing | `403` not yours, `404` unknown want, `409` cancelled |
+| `DELETE` | `/wants/{id}` | — | `204`; **cancels** the want rather than deleting it, and cancelling again changes nothing | `403` not yours, `404` unknown want |
 
 Categories are `FOOD`, `MOVIE`, `GAME` and `TRIP`, matched by exact name — `food` is a 400. `PUT` replaces the message and category; `capacity` is optional and kept when left out, and can only go up. The owner never changes.
+
+`status` is `ACTIVE`, `CLOSED` or `CANCELLED`. A full want is still `ACTIVE`; compare `seatsTaken` with `capacity`. Only an active want takes signups, withdrawals and edits:
+- **Closing** fixes the lineup. Nobody can sign up or withdraw, and the owner can't edit it until they reopen it.
+- **Reopening** makes it active again.
+- **Cancelling** is final. The want leaves the feed, but its row, its lineup and the notifications about it stay, so "dani cancelled 'Pizza Friday'" still has something to point at.
+
+Each of the three tells everyone signed up except the owner, and doing one twice tells nobody twice.
 
 ```bash
 TOKEN=...   # see above
@@ -180,8 +189,10 @@ A want takes up to `capacity` people, its owner included, so a new want starts w
 
 | Method | Path | Body | Success | Errors |
 |---|---|---|---|---|
-| `POST` | `/wants/{id}/signups` | — | `200` `{wantId, message, capacity, seatsTaken, lineup, signedUp}`; signing up again, or as the owner, changes nothing | `404` not in your feed, `409` full |
-| `DELETE` | `/wants/{id}/signups` | — | `200` the same shape; withdrawing when you are not signed up changes nothing | `400` you are the owner, `404` not in your feed |
+| `POST` | `/wants/{id}/signups` | — | `200` `{wantId, message, capacity, seatsTaken, lineup, signedUp, status}`; signing up again, or as the owner, changes nothing | `404` not in your feed, `409` full, closed or cancelled |
+| `DELETE` | `/wants/{id}/signups` | — | `200` the same shape; withdrawing when you are not signed up changes nothing | `400` you are the owner, `404` not in your feed, `409` closed or cancelled |
+
+On a closed or cancelled want, both answer `409` to everyone who can see it, even someone already in the lineup, since the screen offers neither button there. Anyone who can't see it gets `404`, so the `409` never gives away that it exists. A cancelled want can only be seen by its lineup.
 
 `lineup` lists usernames only, in the order people signed up, the owner first. If two people go for the last seat at the same moment, exactly one gets it: each signup locks the want's row in the database before counting the seats, so the second waits for the first and then finds the want full.
 
@@ -190,7 +201,7 @@ curl -X POST   -H "Authorization: Bearer $TOKEN" localhost:8080/wants/7/signups
 curl -X DELETE -H "Authorization: Bearer $TOKEN" localhost:8080/wants/7/signups
 ```
 
-Closing, reopening and cancelling a want are next; the plan is in [docs/design/wants-signups-and-notifications.md](docs/design/wants-signups-and-notifications.md).
+On the screen, **Delete** now cancels. There are no Close or Reopen buttons yet, and the notifications page doesn't word the three new types yet; the next frontend PR adds both. After that comes a fourth status, `HAPPENING`, for a want that is live; the plan is in [docs/design/wants-signups-and-notifications.md](docs/design/wants-signups-and-notifications.md).
 
 ### Follows
 
@@ -234,6 +245,9 @@ When someone follows you, you get a notification. The bell beside your account m
 | `WANT_SIGNUP` | the owner | someone signs up for your want |
 | `WANT_WITHDRAWN` | the owner | someone gives up their seat |
 | `WANT_UPDATED` | everyone signed up, not the owner | the owner renames the want or changes its category; `previousMessage` holds the old name when it was renamed |
+| `WANT_CLOSED` | everyone signed up, not the owner | the owner closes the want |
+| `WANT_REOPENED` | everyone signed up, not the owner | the owner reopens it |
+| `WANT_CANCELLED` | everyone signed up, not the owner | the owner cancels it |
 
 `wantId` and `wantMessage` are null for a follow. `wantMessage` is the want's name when the notification was written, so it still reads correctly after a rename. Each edit is its own notification.
 
@@ -241,7 +255,7 @@ When someone follows you, you get a notification. The bell beside your account m
 
 ```
 src/main/java/com/example/demo/
-  models/        JPA entities and enums (Want, User, Follow, Notification, Category)
+  models/        JPA entities and enums (Want, User, Follow, Notification, Category, WantStatus)
   repositories/  Spring Data interfaces
   services/      business logic and the exceptions that map to HTTP status
   controllers/   HTTP endpoints
@@ -277,7 +291,7 @@ mvn test -Dtest=WantControllerTest#createsWant  # one method
 
 Tests are `@WebMvcTest` slices with a mocked service layer, so **they need no database** and pass on a machine with nothing running. They `@Import(SecurityConfig.class)` so requests go through the real security rules, and they sign in with Spring Security's `jwt()` request post-processor. The `JwtDecoder` is a mock, so **they never contact Clerk**. `WantServiceTest` covers the ownership rule, the feed and that capacity is never lowered, `SignupServiceTest` that the owner cannot withdraw, `FollowServiceTest` who may follow whom and that only a new follow notifies, and `NotificationServiceTest` that you only ever read and mark your own, directly, since the controller tests mock the service away.
 
-**Database tests** (`*IT.java`, run by `mvn verify`) are the other kind. Each run starts a throwaway PostgreSQL with PostGIS in Docker through [Testcontainers](https://testcontainers.com), runs every Flyway migration on it from empty, and calls the real services and repositories, committing for real. They catch what the fakes above cannot: SQL that is wrong, a migration that fails or does not match its entity, a constraint, a transaction that does not roll back. `FollowNotificationsIT` checks that a follow notifies exactly once, that the follow is undone if its notification fails, and how marking read behaves. `WantSignupsIT` checks capacity, signing up and withdrawing, who is notified of what, and the race for the last seat: one test holds the first signup open and shows the second waits for it, another sends five at once for one seat. Both fail every time if the row lock is removed. The first run downloads the image; after that the container starts in a few seconds. They never touch the development database on port 5433.
+**Database tests** (`*IT.java`, run by `mvn verify`) are the other kind. Each run starts a throwaway PostgreSQL with PostGIS in Docker through [Testcontainers](https://testcontainers.com), runs every Flyway migration on it from empty, and calls the real services and repositories, committing for real. They catch what the fakes above cannot: SQL that is wrong, a migration that fails or does not match its entity, a constraint, a transaction that does not roll back. `FollowNotificationsIT` checks that a follow notifies exactly once, that the follow is undone if its notification fails, and how marking read behaves. `WantSignupsIT` checks capacity, signing up and withdrawing, who is notified of what, and the race for the last seat: one test holds the first signup open and shows the second waits for it, another sends five at once for one seat. Both fail every time if the row lock is removed. `WantLifecycleIT` checks closing, reopening and cancelling: what each still allows, who hears about it, and that doing one twice notifies once. The first run downloads the image; after that the container starts in a few seconds. They never touch the development database on port 5433.
 
 Frontend checks:
 
@@ -311,7 +325,7 @@ To replay migrations from scratch, which destroys all data:
 docker compose down -v && docker compose up -d
 ```
 
-`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. `V8__clerk_picture_drop_nickname.sql` drops `nickname`, renames `s3_url` to `image_url` and empties it, once the profile page went and the picture became Clerk's. `V9__create_follows.sql` creates `follows`, one row per follower and followee, unique per pair, never yourself. `V10__seed_test_users.sql` adds the test users `alex`, `sam` and `jordan` with two wants each; like V2, delete it before real use. `V11__create_notifications.sql` creates `notifications`: who it is for, who did it, what kind, when, and when it was read. `V12__want_capacity_and_signups.sql` adds `wants.capacity` (at least 1, the owner included), creates `want_signups`, one row per seat, unique per want and person, seats each existing want's owner, and gives notifications the want they are about, its message and, for a rename, the old one. V3 and V4 stay even though their table is gone, because applied migrations must never change.
+`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. `V8__clerk_picture_drop_nickname.sql` drops `nickname`, renames `s3_url` to `image_url` and empties it, once the profile page went and the picture became Clerk's. `V9__create_follows.sql` creates `follows`, one row per follower and followee, unique per pair, never yourself. `V10__seed_test_users.sql` adds the test users `alex`, `sam` and `jordan` with two wants each; like V2, delete it before real use. `V11__create_notifications.sql` creates `notifications`: who it is for, who did it, what kind, when, and when it was read. `V12__want_capacity_and_signups.sql` adds `wants.capacity` (at least 1, the owner included), creates `want_signups`, one row per seat, unique per want and person, seats each existing want's owner, and gives notifications the want they are about, its message and, for a rename, the old one. `V13__want_close_and_cancel.sql` adds `wants.closed_at` and `wants.cancelled_at`, and the three notification types for them. V3 and V4 stay even though their table is gone, because applied migrations must never change.
 
 If you delete a migration that hasn't run yet and replace it with another of the same version, run `mvn clean` first. Otherwise the old file's compiled copy in `target/classes` stays behind, and Flyway refuses to start with *"Found more than one migration with version"*.
 
