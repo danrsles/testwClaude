@@ -3,6 +3,7 @@ package com.example.demo.controllers;
 import java.time.Instant;
 import java.util.List;
 
+import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
 import com.example.demo.models.User;
 import com.example.demo.models.Want;
@@ -27,7 +28,9 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -72,6 +75,11 @@ class WantControllerTest {
         return user;
     }
 
+    /** A want as the service returns it: just its owner seated, and dani is that owner. */
+    private static WantResponse seated(Want want) {
+        return WantResponse.from(want, 1, true);
+    }
+
     private static RequestPostProcessor signedInAsDani() {
         return jwt().jwt(token -> token.subject(DANI_ID).claim("username", "dani"));
     }
@@ -79,8 +87,8 @@ class WantControllerTest {
     @Test
     void returnsAllWants() throws Exception {
         given(wantService.findAll(DANI)).willReturn(List.of(
-                new Want("Ramen downtown", Category.FOOD, dani),
-                new Want("Finish Elden Ring", Category.GAME, dani)));
+                seated(new Want("Ramen downtown", Category.FOOD, dani)),
+                seated(new Want("Finish Elden Ring", Category.GAME, dani))));
 
         mockMvc.perform(get("/wants").with(signedInAsDani()))
                 .andExpect(status().isOk())
@@ -90,14 +98,17 @@ class WantControllerTest {
                 .andExpect(jsonPath("$[0].userId").value(1))
                 .andExpect(jsonPath("$[0].username").value("dani"))
                 // The owner's Clerk picture, public by design, for showing beside the want.
-                .andExpect(jsonPath("$[0].imageUrl").value("https://img.clerk.com/dani.jpg"));
+                .andExpect(jsonPath("$[0].imageUrl").value("https://img.clerk.com/dani.jpg"))
+                .andExpect(jsonPath("$[0].capacity").value(1))
+                .andExpect(jsonPath("$[0].seatsTaken").value(1))
+                .andExpect(jsonPath("$[0].signedUp").value(true));
     }
 
     @Test
     void neverExposesTheOwnersPrivateDetails() throws Exception {
         // Your followers see your wants, so the owner must appear
         // only as userId, username and picture, never as the User entity.
-        given(wantService.findAll(DANI)).willReturn(List.of(new Want("Ramen downtown", Category.FOOD, dani)));
+        given(wantService.findAll(DANI)).willReturn(List.of(seated(new Want("Ramen downtown", Category.FOOD, dani))));
 
         mockMvc.perform(get("/wants").with(signedInAsDani()))
                 .andExpect(status().isOk())
@@ -119,7 +130,7 @@ class WantControllerTest {
     @Test
     void filtersByCategory() throws Exception {
         given(wantService.findByCategory(eq(Category.TRIP), eq(DANI)))
-                .willReturn(List.of(new Want("Weekend in Montreal", Category.TRIP, dani)));
+                .willReturn(List.of(seated(new Want("Weekend in Montreal", Category.TRIP, dani))));
 
         mockMvc.perform(get("/wants").param("category", "TRIP").with(signedInAsDani()))
                 .andExpect(status().isOk())
@@ -129,8 +140,8 @@ class WantControllerTest {
 
     @Test
     void createsWantForTheSignedInUser() throws Exception {
-        given(wantService.create(eq("Finish Elden Ring"), eq(Category.GAME), eq(DANI)))
-                .willReturn(new Want("Finish Elden Ring", Category.GAME, dani));
+        given(wantService.create(eq("Finish Elden Ring"), eq(Category.GAME), eq(1), eq(DANI)))
+                .willReturn(seated(new Want("Finish Elden Ring", Category.GAME, dani)));
 
         mockMvc.perform(post("/wants").with(signedInAsDani())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -142,8 +153,8 @@ class WantControllerTest {
 
     @Test
     void ignoresAUserIdInTheBody() throws Exception {
-        given(wantService.create(eq("Tacos"), eq(Category.FOOD), eq(DANI)))
-                .willReturn(new Want("Tacos", Category.FOOD, dani));
+        given(wantService.create(eq("Tacos"), eq(Category.FOOD), eq(1), eq(DANI)))
+                .willReturn(seated(new Want("Tacos", Category.FOOD, dani)));
 
         // An old client, or a forged request, naming another user: the token wins.
         mockMvc.perform(post("/wants").with(signedInAsDani())
@@ -151,7 +162,7 @@ class WantControllerTest {
                         .content("{\"message\":\"Tacos\",\"category\":\"FOOD\",\"userId\":2}"))
                 .andExpect(status().isCreated());
 
-        then(wantService).should().create("Tacos", Category.FOOD, DANI);
+        then(wantService).should().create("Tacos", Category.FOOD, 1, DANI);
     }
 
     @Test
@@ -161,7 +172,44 @@ class WantControllerTest {
                         .content("{\"message\":\"Tacos\",\"category\":\"FOOD\"}"))
                 .andExpect(status().isUnauthorized());
 
-        then(wantService).should(never()).create(any(), any(), any());
+        then(wantService).should(never()).create(any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void creatingWithoutCapacityDefaultsToOne() throws Exception {
+        // Clients from before signups send no capacity: the want takes just its owner.
+        given(wantService.create(eq("Tacos"), eq(Category.FOOD), eq(1), eq(DANI)))
+                .willReturn(seated(new Want("Tacos", Category.FOOD, dani)));
+
+        mockMvc.perform(post("/wants").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Tacos\",\"category\":\"FOOD\"}"))
+                .andExpect(status().isCreated());
+
+        then(wantService).should().create("Tacos", Category.FOOD, 1, DANI);
+    }
+
+    @Test
+    void createsWantWithACapacity() throws Exception {
+        given(wantService.create(eq("Pizza Friday"), eq(Category.FOOD), eq(4), eq(DANI)))
+                .willReturn(seated(new Want("Pizza Friday", Category.FOOD, dani, 4)));
+
+        mockMvc.perform(post("/wants").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Pizza Friday\",\"category\":\"FOOD\",\"capacity\":4}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.capacity").value(4));
+    }
+
+    @Test
+    void capacityMustBeAtLeastOne() throws Exception {
+        // It counts the owner, so 0 would be a want its own owner is not in.
+        mockMvc.perform(post("/wants").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Tacos\",\"category\":\"FOOD\",\"capacity\":0}"))
+                .andExpect(status().isBadRequest());
+
+        then(wantService).should(never()).create(any(), any(), anyInt(), any());
     }
 
     @Test
@@ -174,8 +222,8 @@ class WantControllerTest {
 
     @Test
     void updatesWant() throws Exception {
-        given(wantService.update(eq(1L), eq("Ramen somewhere else"), eq(Category.FOOD), eq(DANI)))
-                .willReturn(new Want("Ramen somewhere else", Category.FOOD, dani));
+        given(wantService.update(eq(1L), eq("Ramen somewhere else"), eq(Category.FOOD), isNull(), eq(DANI)))
+                .willReturn(seated(new Want("Ramen somewhere else", Category.FOOD, dani)));
 
         mockMvc.perform(put("/wants/1").with(signedInAsDani())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -186,7 +234,7 @@ class WantControllerTest {
 
     @Test
     void updatingSomeoneElsesWantIsForbidden() throws Exception {
-        given(wantService.update(eq(2L), any(), any(), eq(DANI))).willThrow(new WantForbiddenException(2L));
+        given(wantService.update(eq(2L), any(), any(), any(), eq(DANI))).willThrow(new WantForbiddenException(2L));
 
         mockMvc.perform(put("/wants/2").with(signedInAsDani())
                         .contentType(MediaType.APPLICATION_JSON)

@@ -24,6 +24,31 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     void notify(@Param("recipientId") Long recipientId, @Param("actorId") Long actorId, @Param("type") String type);
 
     /**
+     * As notify, about a want. The database copies the want's current message
+     * onto the row, so the notification still reads correctly after an edit.
+     */
+    @Modifying
+    @Query(value = "INSERT INTO notifications (recipient_id, actor_id, type, want_id, want_message) "
+            + "SELECT :recipientId, :actorId, :type, w.id, w.message FROM wants w WHERE w.id = :wantId",
+            nativeQuery = true)
+    void notifyAboutWant(@Param("recipientId") Long recipientId, @Param("actorId") Long actorId,
+            @Param("type") String type, @Param("wantId") Long wantId);
+
+    /**
+     * Tells everyone signed up for a want, except its owner, in one statement,
+     * so either the whole lineup hears or, if the change rolls back, nobody
+     * does. previousMessage is cast because PostgreSQL cannot infer a type
+     * for a null parameter.
+     */
+    @Modifying
+    @Query(value = "INSERT INTO notifications (recipient_id, actor_id, type, want_id, want_message, previous_message) "
+            + "SELECT s.user_id, :actorId, :type, w.id, w.message, CAST(:previousMessage AS VARCHAR) "
+            + "FROM want_signups s JOIN wants w ON w.id = s.want_id "
+            + "WHERE s.want_id = :wantId AND s.user_id <> w.user_id", nativeQuery = true)
+    void notifyLineup(@Param("wantId") Long wantId, @Param("actorId") Long actorId, @Param("type") String type,
+            @Param("previousMessage") String previousMessage);
+
+    /**
      * Marks a recipient's notifications read, up to and including an id. The
      * bound is what the recipient was shown, so one that arrived since stays
      * unread. Already-read rows keep the time they were first read.

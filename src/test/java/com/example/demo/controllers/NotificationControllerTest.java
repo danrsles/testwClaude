@@ -99,6 +99,61 @@ class NotificationControllerTest {
                 .andExpect(content().string(not(containsString("alex@example.com"))));
     }
 
+    private static Notification alexSignedUpForDanisWant() {
+        Notification notification = new Notification(withId(new User("dani", "user_dani"), 1L),
+                alexWithPrivateDetails(), NotificationType.WANT_SIGNUP);
+        ReflectionTestUtils.setField(notification, "id", 9L);
+        ReflectionTestUtils.setField(notification, "createdAt", Instant.parse("2026-10-21T18:00:00Z"));
+        ReflectionTestUtils.setField(notification, "wantId", 7L);
+        ReflectionTestUtils.setField(notification, "wantMessage", "Pizza Friday");
+        return notification;
+    }
+
+    @Test
+    void signupNotificationShowsTheActorByPublicDetailsOnly() throws Exception {
+        given(notificationService.mine(DANI)).willReturn(List.of(alexSignedUpForDanisWant()));
+
+        mockMvc.perform(get("/notifications").with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].type").value("WANT_SIGNUP"))
+                .andExpect(jsonPath("$[0].actor.username").value("alex"))
+                .andExpect(jsonPath("$[0].actor.email").doesNotExist())
+                .andExpect(jsonPath("$[0].actor.clerkId").doesNotExist())
+                .andExpect(jsonPath("$[0].actor.lastSignInAt").doesNotExist())
+                .andExpect(content().string(not(containsString("alex@example.com"))))
+                .andExpect(content().string(not(containsString("user_alex"))));
+    }
+
+    @Test
+    void notificationCarriesTheWantIdAndMessage() throws Exception {
+        given(notificationService.mine(DANI)).willReturn(List.of(
+                alexSignedUpForDanisWant(),
+                alexFollowedDani(8L, null)));
+
+        mockMvc.perform(get("/notifications").with(signedInAsDani()))
+                .andExpect(jsonPath("$[0].wantId").value(7))
+                .andExpect(jsonPath("$[0].wantMessage").value("Pizza Friday"))
+                // A follow is about no want.
+                .andExpect(jsonPath("$[1].wantId").isEmpty())
+                .andExpect(jsonPath("$[1].wantMessage").isEmpty());
+    }
+
+    @Test
+    void anUpdateNotificationCarriesTheOldName() throws Exception {
+        Notification renamed = new Notification(withId(new User("alex", "user_alex"), 2L),
+                withId(new User("dani", "user_dani"), 1L), NotificationType.WANT_UPDATED);
+        ReflectionTestUtils.setField(renamed, "id", 10L);
+        ReflectionTestUtils.setField(renamed, "wantId", 7L);
+        ReflectionTestUtils.setField(renamed, "wantMessage", "Pizza Saturday");
+        ReflectionTestUtils.setField(renamed, "previousMessage", "Pizza Friday");
+        given(notificationService.mine(DANI)).willReturn(List.of(renamed));
+
+        mockMvc.perform(get("/notifications").with(signedInAsDani()))
+                .andExpect(jsonPath("$[0].type").value("WANT_UPDATED"))
+                .andExpect(jsonPath("$[0].wantMessage").value("Pizza Saturday"))
+                .andExpect(jsonPath("$[0].previousMessage").value("Pizza Friday"));
+    }
+
     @Test
     void marksReadUpToTheNewestShown() throws Exception {
         mockMvc.perform(post("/notifications/read").with(signedInAsDani())

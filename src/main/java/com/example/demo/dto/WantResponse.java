@@ -9,17 +9,23 @@ import com.example.demo.models.Want;
  * profile picture, public by design) only, and never embeds the User entity,
  * which holds that user's email. A new field reaches the wants list only by being
  * added here on purpose.
+ *
+ * seatsTaken counts the owner; signedUp says whether the person asking holds
+ * a seat. Neither is on the entity, so WantService works them out.
  */
 public record WantResponse(Long id, String message, Category category, Long userId, String username,
-        String imageUrl) {
+        String imageUrl, int capacity, int seatsTaken, boolean signedUp) {
 
-    public static WantResponse from(Want want) {
+    public static WantResponse from(Want want, int seatsTaken, boolean signedUp) {
         return new WantResponse(
                 want.getId(),
                 want.getMessage(),
                 want.getCategory(),
                 want.getUser().getId(),
                 want.getUser().getUsername(),
-                want.getUser().getImageUrl());
+                want.getUser().getImageUrl(),
+                want.getCapacity(),
+                seatsTaken,
+                signedUp);
     }
 }

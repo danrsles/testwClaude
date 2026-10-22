@@ -2,9 +2,11 @@ package com.example.demo.services;
 
 import java.util.List;
 
+import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
 import com.example.demo.models.Want;
 import com.example.demo.repositories.WantRepository;
+import com.example.demo.repositories.WantSignupRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,11 +21,16 @@ import org.springframework.transaction.annotation.Transactional;
 public class WantService {
 
     private final WantRepository wantRepository;
+    private final WantSignupRepository wantSignupRepository;
     private final UserService userService;
+    private final NotificationService notificationService;
 
-    public WantService(WantRepository wantRepository, UserService userService) {
+    public WantService(WantRepository wantRepository, WantSignupRepository wantSignupRepository,
+            UserService userService, NotificationService notificationService) {
         this.wantRepository = wantRepository;
+        this.wantSignupRepository = wantSignupRepository;
         this.userService = userService;
+        this.notificationService = notificationService;
     }
 
     /**
@@ -35,35 +42,42 @@ public class WantService {
      * to finish first.
      */
     @Transactional
-    public List<Want> findAll(ClerkIdentity who) {
-        return wantRepository.findFeed(userService.current(who).getId());
+    public List<WantResponse> findAll(ClerkIdentity who) {
+        return withSeats(wantRepository.findFeed(userService.current(who).getId()));
     }
 
     /** As findAll, narrowed to one category. */
     @Transactional
-    public List<Want> findByCategory(Category category, ClerkIdentity who) {
-        return wantRepository.findFeedByCategory(userService.current(who).getId(), category);
+    public List<WantResponse> findByCategory(Category category, ClerkIdentity who) {
+        return withSeats(wantRepository.findFeedByCategory(userService.current(who).getId(), category));
     }
 
     @Transactional
-    public Want create(String message, Category category, ClerkIdentity who) {
-        return wantRepository.save(new Want(message, category, userService.current(who)));
+    public WantResponse create(String message, Category category, int capacity, ClerkIdentity who) {
+        Want want = wantRepository.save(new Want(message, category, userService.current(who), capacity));
+        return WantResponse.from(want, 0, false);
     }
 
     /** Replaces the message and category. The owner never changes. */
     @Transactional
-    public Want update(Long wantId, String message, Category category, ClerkIdentity who) {
+    public WantResponse update(Long wantId, String message, Category category, Integer capacity,
+            ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
 
         want.setMessage(message);
         want.setCategory(category);
 
-        return wantRepository.save(want);
+        return WantResponse.from(wantRepository.save(want), 0, false);
     }
 
     @Transactional
     public void delete(Long wantId, ClerkIdentity who) {
         wantRepository.delete(requireOwned(wantId, who.clerkId()));
+    }
+
+    /** Not built yet: every want reads as empty. */
+    private List<WantResponse> withSeats(List<Want> wants) {
+        return wants.stream().map(want -> WantResponse.from(want, 0, false)).toList();
     }
 
     /** 404 if the want does not exist, 403 if it belongs to someone else. */
