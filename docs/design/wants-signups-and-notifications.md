@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: step 1 built (notifications for follows); steps 2 to 5 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: steps 1 and 2 built (notifications for follows; capacity and signups); steps 3 to 6 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 
@@ -12,17 +12,19 @@
 | Question | Decision |
 |---|---|
 | How are signups allocated? | First come, first served. No bidding, no owner approval, for now. |
-| Does the owner take a seat? | Yes. Creating a want signs the owner up, so capacity counts the owner and is at least 1. |
+| Does the owner take a seat? | Yes. Creating a want signs the owner up, so capacity counts the owner and is at least 1. The owner is told the want was created (`WANT_CREATED`, to themselves). A signup by the owner changes nothing, since they already hold the seat. |
 | Can the owner withdraw? | No. That is a cancel. |
-| Can others withdraw? | Yes, while the want is open. The seat reopens and the owner is notified. |
+| Can others withdraw? | Yes, while the want is not closed or cancelled, full or not. The seat reopens and the owner is notified. |
 | Deadline | Optional. `expires_at` may be null: the want stays open until the owner closes it. |
 | What happens at the deadline? | The want closes automatically, exactly as if the owner had closed it, and the lineup is notified. |
 | After closing | The lineup is fixed. The owner can reopen it, which notifies the lineup, or cancel it. |
 | Reopening an expired want | Needs a new future deadline or none, or the expiry job would close it again within a minute. |
 | Cancelling | Replaces deleting. The want is hidden from the feed and the lineup is notified. |
-| Editing | The message can change at any time, without notifying anyone. Capacity can be raised but never lowered. |
+| Editing | The message and category can change at any time. Either change notifies the lineup (`WANT_UPDATED`), keeping the old name when it was renamed. Each edit is its own notification; grouping is for the screen. Capacity can be raised but never lowered, and raising it notifies nobody. |
 | Notifications per signup | One each. Twenty signups are twenty bell entries; grouping them is a display decision for later. |
 | Following twice | Notifies once. |
+| Who may withdraw | Anyone in the lineup but the owner, even after unfollowing the owner. Others get 404 if the want is not in their feed. |
+| How capacity is enforced | Lock the want's row (`SELECT ... FOR UPDATE`), then count the signups in a separate statement, then insert. Not a `seats_taken` counter, which can drift (a user's deletion cascades away their signups without decrementing it); not SERIALIZABLE, which needs retries; not Redis, which only pays off for timed seat holds or very high signup rates. |
 
 ## Model
 
@@ -36,8 +38,9 @@ want_signups   id, want_id, user_id, created_at
                UNIQUE (want_id, user_id)
 
 notifications  id, recipient_id, actor_id, type, want_id NULL, want_message NULL,
+               previous_message NULL,                                -- the old name, for a rename
                created_at, read_at NULL                              -- NULL = unread
-               type IN ('FOLLOW', 'WANT_SIGNUP', 'WANT_WITHDRAWN',
+               type IN ('FOLLOW', 'WANT_CREATED', 'WANT_SIGNUP', 'WANT_WITHDRAWN', 'WANT_UPDATED',
                         'WANT_CLOSED', 'WANT_REOPENED', 'WANT_CANCELLED')
                INDEX (recipient_id, read_at)
 ```
@@ -64,8 +67,10 @@ OPEN ◀────────────────────────
 | Type | Recipient | Written when |
 |---|---|---|
 | `FOLLOW` | the person followed | `followIfAbsent` actually inserted a row |
+| `WANT_CREATED` | the owner (also the actor) | the want is created |
 | `WANT_SIGNUP` | the owner | a signup succeeds |
 | `WANT_WITHDRAWN` | the owner | a signup is removed |
+| `WANT_UPDATED` | the lineup, not the owner | the owner renames or recategorises it |
 | `WANT_CLOSED` | the lineup, not the owner | the owner closes it, or the expiry job does |
 | `WANT_REOPENED` | the lineup, not the owner | the owner reopens it |
 | `WANT_CANCELLED` | the lineup, not the owner | the owner cancels it |
@@ -76,7 +81,7 @@ Lineup notifications are one `INSERT ... SELECT` from `want_signups`, in the sam
 
 - **The notifications table is the source of truth, always written.** A live push (later) only nudges an open tab to refetch. Writing to the table only for offline users would mean knowing reliably who is online, which breaks with closed tabs, dropped connections and multiple tabs.
 - **One generic table.** A follow and a signup are the same kind of event. New events add a `type`, not a table.
-- **The database decides capacity.** Two people taking the last seat at once must not both get in, so the signup is a single conditional statement holding a lock on the want row, never "count, then insert". Same reasoning as `followIfAbsent` and `insertIfAbsent`: no catching constraint exceptions, which would mark the transaction rollback-only.
+- **The database decides capacity.** Two people taking the last seat at once must not both get in, so a signup first locks the want's row, then counts and inserts. The count must be its own statement after the lock: a single `INSERT ... SELECT ... FOR UPDATE` lets both in, because a signup never changes the `wants` row, so PostgreSQL never re-checks the waiting statement, and its count from before the wait still shows a free seat. A new statement under READ COMMITTED sees the first signup once it commits. Every other change to a want (edit, and later close, reopen, cancel) takes the same lock. Same reasoning as `followIfAbsent` and `insertIfAbsent`: no catching constraint exceptions, which would mark the transaction rollback-only.
 - **"Open" is checked on read.** Signups test the deadline in the query, so nothing has to close wants on time for correctness.
 - **The expiry job exists only for the notification.** A `@Scheduled` task runs `UPDATE wants SET closed_at = now() WHERE closed_at IS NULL AND cancelled_at IS NULL AND expires_at < now() RETURNING id` and notifies each lineup returned. The update flips each want exactly once, so even two instances running the job would not notify twice.
 - **Cancel instead of delete.** Notifications point at wants. Deleting the row would take the link with it and leave "Dani cancelled …" with nothing to show.
@@ -90,12 +95,12 @@ Lineup notifications are one `INSERT ... SELECT` from `want_signups`, in the sam
 |---|---|---|
 | `GET /notifications` | your notifications, newest first, actor by public fields only | |
 | `POST /notifications/read` | marks them read | |
-| `POST /wants/{id}/signups` | sign up; idempotent | 409 full, closed, expired or cancelled; 400 own want; 404 not in your feed |
-| `DELETE /wants/{id}/signups` | withdraw; idempotent | 409 closed or cancelled; 400 owner |
+| `POST /wants/{id}/signups` | sign up; idempotent, returns the lineup | 409 full, closed, expired or cancelled; 404 not in your feed |
+| `DELETE /wants/{id}/signups` | withdraw; idempotent, returns the lineup | 409 closed or cancelled; 400 owner |
 | `POST /wants/{id}/close` | owner fixes the lineup | 403 not the owner |
 | `POST /wants/{id}/reopen` | owner reopens, with an optional new deadline | 403 not the owner; 400 deadline in the past |
 | `DELETE /wants/{id}` | becomes cancel | 403 not the owner |
-| `PUT /wants/{id}` | edits the message, may raise capacity | 400 capacity lowered |
+| `PUT /wants/{id}` | edits the message and category, may raise capacity; a rename or new category notifies the lineup | 400 capacity lowered |
 
 Responses that show other people (actors, lineups) need their own records with public fields only, like `UserSummary`, never a `User`.
 
@@ -104,7 +109,8 @@ Responses that show other people (actors, lineups) need their own records with p
 Each step is one PR and works without the ones after it.
 
 1. **Done. Notifications foundation:** the table, `GET /notifications`, `POST /notifications/read`, the bell in the header with an unread count and 30-second polling (on TanStack Query, shared by the bell and the page), and `FOLLOW` (which needs `followIfAbsent` to return the rows it inserted).
-2. **Capacity and signups:** the columns, `want_signups`, the owner's automatic seat, signing up and withdrawing, `WANT_SIGNUP` and `WANT_WITHDRAWN`.
-3. **Close, reopen and cancel:** `WANT_CLOSED`, `WANT_REOPENED`, `WANT_CANCELLED`; delete becomes cancel.
-4. **Expiry job:** automatic closing at the deadline.
+2. **Done (backend; the screen is a separate PR). Capacity and signups:** `wants.capacity`, `want_signups`, the owner's automatic seat, signing up and withdrawing, seats in the feed, and `WANT_CREATED`, `WANT_SIGNUP`, `WANT_WITHDRAWN` and `WANT_UPDATED`.
+3. **Close, reopen and cancel:** `closed_at`, `cancelled_at`, `WANT_CLOSED`, `WANT_REOPENED`, `WANT_CANCELLED`; delete becomes cancel. Reopen takes no deadline until step 4.
+4. **Deadline and expiry job:** `expires_at`, signups refused after it, and automatic closing at the deadline.
 5. **Optional: live updates over SSE**, if polling is too slow.
+6. **Later: tell followers about new wants,** organised into groups, so people hear about wants they could join without opening the feed.

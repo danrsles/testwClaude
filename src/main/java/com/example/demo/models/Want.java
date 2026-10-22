@@ -30,6 +30,10 @@ public class Want {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    /** How many people the want takes, its owner included. Can be raised, never lowered. */
+    @Column(nullable = false)
+    private int capacity = 1;
+
     protected Want() {
     }
 
@@ -37,6 +41,11 @@ public class Want {
         this.message = message;
         this.category = category;
         this.user = user;
+    }
+
+    public Want(String message, Category category, User user, int capacity) {
+        this(message, category, user);
+        this.capacity = capacity;
     }
 
     public Long getId() {
@@ -65,5 +74,13 @@ public class Want {
 
     public void setUser(User user) {
         this.user = user;
+    }
+
+    public int getCapacity() {
+        return capacity;
+    }
+
+    public void setCapacity(int capacity) {
+        this.capacity = capacity;
     }
 }

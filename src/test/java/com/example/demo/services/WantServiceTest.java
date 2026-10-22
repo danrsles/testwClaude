@@ -3,10 +3,12 @@ package com.example.demo.services;
 import java.util.List;
 import java.util.Optional;
 
+import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
 import com.example.demo.models.User;
 import com.example.demo.models.Want;
 import com.example.demo.repositories.WantRepository;
+import com.example.demo.repositories.WantSignupRepository;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,7 +26,7 @@ import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 
-/** The ownership rule, which the controller tests mock away. */
+/** The ownership and capacity rules, which the controller tests mock away. */
 @ExtendWith(MockitoExtension.class)
 class WantServiceTest {
 
@@ -32,7 +34,13 @@ class WantServiceTest {
     private WantRepository wantRepository;
 
     @Mock
+    private WantSignupRepository wantSignupRepository;
+
+    @Mock
     private UserService userService;
+
+    @Mock
+    private NotificationService notificationService;
 
     @InjectMocks
     private WantService wantService;
@@ -54,35 +62,45 @@ class WantServiceTest {
         given(userService.current(DANI)).willReturn(dani);
         given(wantRepository.save(any(Want.class))).willAnswer(call -> call.getArgument(0));
 
-        Want saved = wantService.create("Tacos", Category.FOOD, DANI);
+        WantResponse saved = wantService.create("Tacos", Category.FOOD, 1, DANI);
 
-        assertThat(saved.getUser()).isSameAs(dani);
+        assertThat(saved.userId()).isEqualTo(1L);
     }
 
     @Test
     void ownerMayUpdateTheirWant() {
         Want want = new Want("Ramen", Category.FOOD, dani);
-        given(wantRepository.findById(1L)).willReturn(Optional.of(want));
-        given(wantRepository.save(want)).willReturn(want);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
 
-        Want updated = wantService.update(1L, "Pho", Category.FOOD, DANI);
+        WantResponse updated = wantService.update(1L, "Pho", Category.FOOD, null, DANI);
 
-        assertThat(updated.getMessage()).isEqualTo("Pho");
-        assertThat(updated.getUser()).isSameAs(dani);
+        assertThat(updated.message()).isEqualTo("Pho");
+        assertThat(updated.userId()).isEqualTo(1L);
     }
 
     @Test
     void othersMayNotUpdateIt() {
-        given(wantRepository.findById(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, dani)));
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, dani)));
 
-        assertThatThrownBy(() -> wantService.update(1L, "Mine now", Category.FOOD, MALLORY))
+        assertThatThrownBy(() -> wantService.update(1L, "Mine now", Category.FOOD, null, MALLORY))
                 .isInstanceOf(WantForbiddenException.class);
-        then(wantRepository).should(never()).save(any());
+        then(wantRepository).should(never()).saveAndFlush(any());
+    }
+
+    @Test
+    void capacityCannotBeLowered() {
+        // Lowering it could take a seat from someone who already has one.
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Pizza", Category.FOOD, dani, 3)));
+
+        assertThatThrownBy(() -> wantService.update(1L, "Pizza", Category.FOOD, 2, DANI))
+                .isInstanceOf(CapacityLoweredException.class);
+        then(wantRepository).should(never()).saveAndFlush(any());
     }
 
     @Test
     void othersMayNotDeleteIt() {
-        given(wantRepository.findById(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, dani)));
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, dani)));
 
         assertThatThrownBy(() -> wantService.delete(1L, MALLORY))
                 .isInstanceOf(WantForbiddenException.class);
@@ -91,7 +109,7 @@ class WantServiceTest {
 
     @Test
     void wantsWithoutAClerkOwnerAreReadOnly() {
-        given(wantRepository.findById(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, legacy)));
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, legacy)));
 
         assertThatThrownBy(() -> wantService.delete(1L, DANI))
                 .isInstanceOf(WantForbiddenException.class);
@@ -99,7 +117,7 @@ class WantServiceTest {
 
     @Test
     void unknownWantIsNotFound() {
-        given(wantRepository.findById(99L)).willReturn(Optional.empty());
+        given(wantRepository.findByIdForUpdate(99L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> wantService.delete(99L, DANI))
                 .isInstanceOf(WantNotFoundException.class);
@@ -112,7 +130,7 @@ class WantServiceTest {
         given(userService.current(DANI)).willReturn(dani);
         given(wantRepository.findFeed(1L)).willReturn(feed);
 
-        assertThat(wantService.findAll(DANI)).isSameAs(feed);
+        assertThat(wantService.findAll(DANI)).extracting(WantResponse::message).containsExactly("Ramen");
         then(wantRepository).should(never()).findAll();
     }
 

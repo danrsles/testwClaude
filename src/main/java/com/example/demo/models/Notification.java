@@ -47,6 +47,18 @@ public class Notification {
     @Column(name = "read_at", insertable = false, updatable = false)
     private Instant readAt;
 
+    /** The want it is about, or null for a follow. A bare id: the want may have changed since. */
+    @Column(name = "want_id", insertable = false, updatable = false)
+    private Long wantId;
+
+    /** The want's message when this was written, so it still reads correctly after an edit. */
+    @Column(name = "want_message", insertable = false, updatable = false)
+    private String wantMessage;
+
+    /** For WANT_UPDATED, the name the want had before; null if the name did not change. */
+    @Column(name = "previous_message", insertable = false, updatable = false)
+    private String previousMessage;
+
     protected Notification() {
     }
 
@@ -78,5 +90,17 @@ public class Notification {
 
     public Instant getReadAt() {
         return readAt;
+    }
+
+    public Long getWantId() {
+        return wantId;
+    }
+
+    public String getWantMessage() {
+        return wantMessage;
+    }
+
+    public String getPreviousMessage() {
+        return previousMessage;
     }
 }

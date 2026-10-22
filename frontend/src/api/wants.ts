@@ -1,4 +1,4 @@
-import type { Category, Want, WantRequest } from '../types/wants'
+import type { Category, SignupEventDetails, Want, WantRequest } from '../types/wants'
 import { authFetch, fail } from './http'
 
 const BASE = '/api/wants'
@@ -30,4 +30,16 @@ export async function updateWant(id: number, body: WantRequest): Promise<Want> {
 export async function deleteWant(id: number): Promise<void> {
   const response = await authFetch(`${BASE}/${id}`, { method: 'DELETE' })
   if (!response.ok) await fail(response)
+}
+
+/** Takes a seat. Idempotent: already in, it changes nothing. Full is a 409. */
+export async function signUp(id: number): Promise<SignupEventDetails> {
+  const response = await authFetch(`${BASE}/${id}/signups`, { method: 'POST' })
+  return response.ok ? response.json() : fail(response)
+}
+
+/** Gives up your seat. Idempotent: not in, it changes nothing. The owner can't. */
+export async function withdraw(id: number): Promise<SignupEventDetails> {
+  const response = await authFetch(`${BASE}/${id}/signups`, { method: 'DELETE' })
+  return response.ok ? response.json() : fail(response)
 }

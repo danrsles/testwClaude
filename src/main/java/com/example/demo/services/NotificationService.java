@@ -32,6 +32,22 @@ public class NotificationService {
         notificationRepository.notify(recipientId, actor.getId(), type.name());
     }
 
+    /** As notify, about a want, whose current message the notification keeps. Joins the caller's transaction. */
+    @Transactional
+    public void notify(Long recipientId, User actor, NotificationType type, Long wantId) {
+        notificationRepository.notifyAboutWant(recipientId, actor.getId(), type.name(), wantId);
+    }
+
+    /**
+     * Tells a want's lineup, all but its owner, that the actor did something
+     * to it. previousMessage is the name it replaced, or null. Joins the
+     * caller's transaction.
+     */
+    @Transactional
+    public void notifyLineup(Long wantId, User actor, NotificationType type, String previousMessage) {
+        notificationRepository.notifyLineup(wantId, actor.getId(), type.name(), previousMessage);
+    }
+
     /** Your 50 newest notifications, newest first, read or not. */
     @Transactional
     public List<Notification> mine(ClerkIdentity who) {

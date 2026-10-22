@@ -39,20 +39,21 @@ public class WantController {
     public List<WantResponse> wants(@AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) Category category) {
         ClerkIdentity who = Identities.of(jwt);
-        var wants = category == null ? wantService.findAll(who) : wantService.findByCategory(category, who);
-        return wants.stream().map(WantResponse::from).toList();
+        return category == null ? wantService.findAll(who) : wantService.findByCategory(category, who);
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public WantResponse create(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody WantRequest request) {
-        return WantResponse.from(wantService.create(request.message(), request.category(), Identities.of(jwt)));
+        return wantService.create(request.message(), request.category(), request.capacityOnCreate(),
+                Identities.of(jwt));
     }
 
     @PutMapping("/{id}")
     public WantResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
             @Valid @RequestBody WantRequest request) {
-        return WantResponse.from(wantService.update(id, request.message(), request.category(), Identities.of(jwt)));
+        return wantService.update(id, request.message(), request.category(), request.capacity(),
+                Identities.of(jwt));
     }
 
     @DeleteMapping("/{id}")
