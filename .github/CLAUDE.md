@@ -9,6 +9,8 @@
 - Repository *variables*: `CLERK_PUBLISHABLE_KEY` (the build fails if it is empty, since the bundle would be a blank page), and `AWS_DEPLOY_ROLE_ARN`, `AWS_DEPLOY_API_ROLE_ARN`, `SITE_BUCKET`, `CLOUDFRONT_DISTRIBUTION_ID` from `terraform output`. `deploy-web` is skipped until `SITE_BUCKET` exists.
 - AWS access is GitHub OIDC, never stored keys; a job that assumes a role needs `permissions: id-token: write`. The trust policy's subject format is a known trap: see `terraform/CLAUDE.md`.
 
+**`test-web` checks formatting.** It runs `npm run format:check` after lint, so a frontend file Prettier would change fails the PR. The Claude hook formats what Claude writes, so this mostly catches hand edits; run `npm run format` in `frontend/` to fix one.
+
 **`deploy-web`**
 - It deploys the `dist/` that `test-web` built and uploaded, so the tested build is the deployed build. Don't rebuild it.
 - The upload order is deliberate: new `assets/` first (immutable), then everything else with `--delete` and `no-cache`, and only then old assets are deleted. A visitor never gets an `index.html` whose scripts are missing.
