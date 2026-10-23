@@ -68,7 +68,12 @@ describe('NotificationsBell', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(getMe).mockResolvedValue({
-      id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null, imageUrl: null,
+      id: 1,
+      username: 'dani',
+      clerkId: 'user_dani',
+      email: null,
+      lastSignInAt: null,
+      imageUrl: null,
     })
     vi.mocked(markNotificationsRead).mockResolvedValue()
   })
@@ -110,7 +115,12 @@ describe('Notifications', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(getMe).mockResolvedValue({
-      id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null, imageUrl: null,
+      id: 1,
+      username: 'dani',
+      clerkId: 'user_dani',
+      email: null,
+      lastSignInAt: null,
+      imageUrl: null,
     })
     vi.mocked(markNotificationsRead).mockResolvedValue()
   })
@@ -200,9 +210,7 @@ describe('Notifications', () => {
   })
 
   it('shows a rename with the old and new names', async () => {
-    vi.mocked(listNotifications).mockResolvedValue([
-      aboutWant('WANT_UPDATED', 'sam', 'Pizza Saturday', 'Pizza Friday'),
-    ])
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_UPDATED', 'sam', 'Pizza Saturday', 'Pizza Friday')])
     renderAt('/notifications')
 
     expect(await screen.findByRole('listitem')).toHaveTextContent("sam renamed 'Pizza Friday' to 'Pizza Saturday'")

@@ -37,9 +37,7 @@ describe('People', () => {
     vi.mocked(listFollowing).mockResolvedValue([])
     render(<People />)
 
-    expect(
-      await screen.findByText("You don't follow anyone yet. Search for someone above."),
-    ).toBeInTheDocument()
+    expect(await screen.findByText("You don't follow anyone yet. Search for someone above.")).toBeInTheDocument()
   })
 
   it('searches by the trimmed username and marks whom you follow', async () => {
@@ -87,9 +85,7 @@ describe('People', () => {
     expect(await screen.findByText('Now following sam. Their wants are in your list.')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Unfollow sam' }))
-    expect(
-      await screen.findByText('Unfollowed sam. Their wants are no longer in your list.'),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('Unfollowed sam. Their wants are no longer in your list.')).toBeInTheDocument()
 
     await userEvent.type(box, 'x')
     expect(screen.queryByText(/Unfollowed sam/)).not.toBeInTheDocument()
@@ -143,9 +139,7 @@ describe('People', () => {
   it('keeps each button blocked until its own request answers', async () => {
     // Each follow waits until the test lets it finish.
     const finish = new Map<number, () => void>()
-    vi.mocked(follow).mockImplementation(
-      (id) => new Promise((resolve) => finish.set(id, () => resolve(undefined))),
-    )
+    vi.mocked(follow).mockImplementation((id) => new Promise((resolve) => finish.set(id, () => resolve(undefined))))
     vi.mocked(searchPeople).mockResolvedValue([person(4, 'alex'), person(3, 'sam')])
     render(<People />)
     await userEvent.type(screen.getByLabelText('Search by username'), 'a')

@@ -37,9 +37,7 @@ function describe(n: Notification): string {
     case 'WANT_WITHDRAWN':
       return `withdrew from ${want}`
     case 'WANT_UPDATED':
-      return n.previousMessage === null
-        ? `updated ${want}`
-        : `renamed '${n.previousMessage}' to ${want}`
+      return n.previousMessage === null ? `updated ${want}` : `renamed '${n.previousMessage}' to ${want}`
     case 'WANT_CLOSED':
       return `closed ${want}`
     case 'WANT_REOPENED':

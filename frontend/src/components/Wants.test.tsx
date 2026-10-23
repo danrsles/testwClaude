@@ -38,7 +38,14 @@ vi.mock('@clerk/react', () => ({
 }))
 
 const DANI: User = { id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null, imageUrl: null }
-const SAM: User = { id: 2, username: 'sam', clerkId: 'user_sam', email: null, lastSignInAt: null, imageUrl: 'https://img.clerk.com/sam.jpg' }
+const SAM: User = {
+  id: 2,
+  username: 'sam',
+  clerkId: 'user_sam',
+  email: null,
+  lastSignInAt: null,
+  imageUrl: 'https://img.clerk.com/sam.jpg',
+}
 
 // An active want for one with only its owner seated, unless `seats` says otherwise.
 function want(
@@ -49,8 +56,17 @@ function want(
   seats: Partial<Pick<Want, 'capacity' | 'seatsTaken' | 'signedUp' | 'status'>> = {},
 ): Want {
   return {
-    id, message, category, userId: owner.id, username: owner.username, imageUrl: owner.imageUrl,
-    capacity: 1, seatsTaken: 1, signedUp: owner === DANI, status: 'ACTIVE', ...seats,
+    id,
+    message,
+    category,
+    userId: owner.id,
+    username: owner.username,
+    imageUrl: owner.imageUrl,
+    capacity: 1,
+    seatsTaken: 1,
+    signedUp: owner === DANI,
+    status: 'ACTIVE',
+    ...seats,
   }
 }
 
@@ -81,10 +97,7 @@ describe('Wants', () => {
     vi.mocked(getMe).mockResolvedValue(DANI)
     vi.mocked(getToken).mockResolvedValue('fresh-token')
     clerk.user = { imageUrl: 'https://img.clerk.com/old.jpg' }
-    vi.mocked(listWants).mockResolvedValue([
-      want(1, 'Ramen downtown'),
-      want(2, 'Dune Part Two', 'MOVIE'),
-    ])
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown'), want(2, 'Dune Part Two', 'MOVIE')])
   })
 
   it('points to People when the list is empty', async () => {
@@ -209,10 +222,7 @@ describe('Wants', () => {
   })
 
   it("offers Close on your own active wants, but not on other people's", async () => {
-    vi.mocked(listWants).mockResolvedValue([
-      want(1, 'Ramen downtown'),
-      want(2, 'Dune Part Two', 'MOVIE', SAM),
-    ])
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown'), want(2, 'Dune Part Two', 'MOVIE', SAM)])
     renderWants()
     await screen.findByText('Dune Part Two')
 
@@ -282,10 +292,7 @@ describe('Wants', () => {
   })
 
   it("offers edit controls only on the signed-in user's own wants", async () => {
-    vi.mocked(listWants).mockResolvedValue([
-      want(1, 'Ramen downtown'),
-      want(2, 'Dune Part Two', 'MOVIE', SAM),
-    ])
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown'), want(2, 'Dune Part Two', 'MOVIE', SAM)])
     renderWants()
     await screen.findByText('Dune Part Two')
 
@@ -296,10 +303,7 @@ describe('Wants', () => {
   })
 
   it('names each owner by username', async () => {
-    vi.mocked(listWants).mockResolvedValue([
-      want(1, 'Ramen downtown'),
-      want(2, 'Dune Part Two', 'MOVIE', SAM),
-    ])
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown'), want(2, 'Dune Part Two', 'MOVIE', SAM)])
     renderWants()
 
     expect(await screen.findByText('sam')).toBeInTheDocument()
@@ -307,10 +311,7 @@ describe('Wants', () => {
   })
 
   it("shows each owner's picture beside their want, or the placeholder without one", async () => {
-    vi.mocked(listWants).mockResolvedValue([
-      want(1, 'Ramen downtown'),
-      want(2, 'Dune Part Two', 'MOVIE', SAM),
-    ])
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown'), want(2, 'Dune Part Two', 'MOVIE', SAM)])
     renderWants()
     await screen.findByText('Dune Part Two')
 
@@ -402,7 +403,13 @@ describe('Wants', () => {
   it('signs up and reloads the list', async () => {
     vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4 })])
     vi.mocked(signUp).mockResolvedValue({
-      wantId: 2, message: 'Dune Part Two', capacity: 4, seatsTaken: 2, lineup: ['sam', 'dani'], signedUp: true, status: 'ACTIVE',
+      wantId: 2,
+      message: 'Dune Part Two',
+      capacity: 4,
+      seatsTaken: 2,
+      lineup: ['sam', 'dani'],
+      signedUp: true,
+      status: 'ACTIVE',
     })
     renderWants()
     await screen.findByText('Dune Part Two')
@@ -429,7 +436,13 @@ describe('Wants', () => {
       want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4, seatsTaken: 2, signedUp: true }),
     ])
     vi.mocked(withdraw).mockResolvedValue({
-      wantId: 2, message: 'Dune Part Two', capacity: 4, seatsTaken: 1, lineup: ['sam'], signedUp: false, status: 'ACTIVE',
+      wantId: 2,
+      message: 'Dune Part Two',
+      capacity: 4,
+      seatsTaken: 1,
+      lineup: ['sam'],
+      signedUp: false,
+      status: 'ACTIVE',
     })
     renderWants()
     await screen.findByText('Dune Part Two')

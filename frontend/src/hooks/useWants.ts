@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  cancelWant,
-  closeWant,
-  createWant,
-  listWants,
-  reopenWant,
-  signUp,
-  updateWant,
-  withdraw,
-} from '../api/wants'
+import { cancelWant, closeWant, createWant, listWants, reopenWant, signUp, updateWant, withdraw } from '../api/wants'
 import type { Category, Want } from '../types/wants'
 
 function messageOf(e: unknown): string {
@@ -96,9 +87,7 @@ export function useWants(filter: Category | ''): UseWants {
 
   const update = useCallback(
     (id: number, message: string, category: Category, capacity?: number) =>
-      mutate(() =>
-        updateWant(id, capacity === undefined ? { message, category } : { message, category, capacity }),
-      ),
+      mutate(() => updateWant(id, capacity === undefined ? { message, category } : { message, category, capacity })),
     [mutate],
   )
 

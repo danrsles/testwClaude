@@ -75,8 +75,7 @@ export default function Wants() {
   // button would then mean "don't".
   function confirmCancel(want: Want) {
     const others = want.seatsTaken - 1
-    const told =
-      others > 0 ? ` The ${others} other ${others === 1 ? 'person' : 'people'} signed up will be told.` : ''
+    const told = others > 0 ? ` The ${others} other ${others === 1 ? 'person' : 'people'} signed up will be told.` : ''
     if (window.confirm(`Call off '${want.message}' for good?${told} This can't be undone.`)) {
       cancel(want.id)
     }
@@ -86,9 +85,7 @@ export default function Wants() {
     <>
       <title>Wants</title>
       <h1 className="text-3xl font-semibold tracking-tight">Wants</h1>
-      <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">
-        Things worth doing, eating, playing and visiting.
-      </p>
+      <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">Things worth doing, eating, playing and visiting.</p>
 
       <form onSubmit={submit} className="mb-5 flex flex-wrap gap-2">
         <input
@@ -147,7 +144,8 @@ export default function Wants() {
       {error && (
         <p
           role="alert"
-          className="mb-4 rounded-lg border border-red-600/50 bg-red-600/10 px-3 py-2.5 text-sm text-red-700 dark:text-red-400">
+          className="mb-4 rounded-lg border border-red-600/50 bg-red-600/10 px-3 py-2.5 text-sm text-red-700 dark:text-red-400"
+        >
           {error}
         </p>
       )}
@@ -227,10 +225,7 @@ export default function Wants() {
                     <button onClick={() => saveEdit(want)} className="btn px-2.5 py-1.5 text-sm">
                       Save
                     </button>
-                    <button
-                      onClick={() => setEditingId(null)}
-                      className="btn px-2.5 py-1.5 text-sm"
-                    >
+                    <button onClick={() => setEditingId(null)} className="btn px-2.5 py-1.5 text-sm">
                       Cancel
                     </button>
                   </>
@@ -246,9 +241,7 @@ export default function Wants() {
                       <>
                         <select
                           value={want.category}
-                          onChange={(e) =>
-                            update(want.id, want.message, e.target.value as Category)
-                          }
+                          onChange={(e) => update(want.id, want.message, e.target.value as Category)}
                           aria-label="Change category"
                           className="field px-2 py-1.5 text-sm"
                         >
@@ -287,9 +280,7 @@ export default function Wants() {
                 ) : (
                   <>
                     {want.seatsTaken >= want.capacity && (
-                      <span className="self-center text-sm font-medium text-stone-500 dark:text-stone-400">
-                        Full
-                      </span>
+                      <span className="self-center text-sm font-medium text-stone-500 dark:text-stone-400">Full</span>
                     )}
                     <button
                       onClick={() => signUp(want.id)}

@@ -141,11 +141,15 @@ describe('App routing', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Wants' })).toBeInTheDocument()
   })
 
-  it('has no profile page: Clerk\'s account menu is the only account control', () => {
+  it("has no profile page: Clerk's account menu is the only account control", () => {
     renderAt('/')
     const nav = screen.getByRole('navigation', { name: 'Main' })
 
-    expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Wants', 'People', 'Info'])
+    expect(
+      within(nav)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Wants', 'People', 'Info'])
     expect(screen.queryByRole('link', { name: /profile/i })).not.toBeInTheDocument()
   })
 })
