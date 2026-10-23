@@ -211,15 +211,14 @@ export default function Wants() {
                 {want.seatsTaken} / {want.capacity} seats
               </span>
 
-              {want.status === 'CLOSED' && (
-                // Filled and borderless like the category tag, so it reads as a status, not a button.
-                <span className="rounded-full bg-stone-200 px-2 py-0.5 text-xs font-semibold tracking-wider text-stone-700 dark:bg-stone-800 dark:text-stone-300">
-                  Closed
-                </span>
-              )}
-
               {/* Wraps rather than spilling out of the card on narrow phones. */}
               <span className="ml-auto flex flex-wrap justify-end gap-1.5 whitespace-nowrap">
+                {want.status === 'CLOSED' && (
+                  // Filled and borderless like the category tag, so it reads as a status, not a button.
+                  <span className="self-center rounded-full bg-stone-200 px-2 py-0.5 text-xs font-semibold tracking-wider text-stone-700 dark:bg-stone-800 dark:text-stone-300">
+                    Closed
+                  </span>
+                )}
                 {editingId === want.id ? (
                   <>
                     <button onClick={() => saveEdit(want)} className="btn px-2.5 py-1.5 text-sm">
@@ -268,7 +267,7 @@ export default function Wants() {
                     )}
                     <button
                       onClick={() => confirmCancel(want)}
-                      className="btn px-2.5 py-1.5 text-sm text-red-700 hover:border-red-600 dark:text-red-400"
+                      className="btn ml-2 border-red-300 px-2.5 py-1.5 text-sm text-red-700 hover:border-red-600 dark:border-red-900/60 dark:text-red-400 dark:hover:border-red-600"
                     >
                       Cancel want
                     </button>
