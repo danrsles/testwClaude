@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: steps 1 to 3 built (notifications for follows; capacity and signups; close, reopen and cancel, backend only); steps 4 to 7 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: steps 1 to 3 built (notifications for follows; capacity and signups; close, reopen and cancel); steps 4 to 7 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 
@@ -114,7 +114,7 @@ Each step is one PR and works without the ones after it.
 
 1. **Done. Notifications foundation:** the table, `GET /notifications`, `POST /notifications/read`, the bell in the header with an unread count and 30-second polling (on TanStack Query, shared by the bell and the page), and `FOLLOW` (which needs `followIfAbsent` to return the rows it inserted).
 2. **Done. Capacity and signups:** `wants.capacity`, `want_signups`, the owner's automatic seat, signing up and withdrawing, seats in the feed, and `WANT_CREATED`, `WANT_SIGNUP`, `WANT_WITHDRAWN` and `WANT_UPDATED`.
-3. **Done (backend; the buttons and notification texts are a separate PR). Close, reopen and cancel:** `closed_at`, `cancelled_at`, `status` in the responses, `WANT_CLOSED`, `WANT_REOPENED`, `WANT_CANCELLED`; delete becomes cancel. Reopen takes no deadline until step 5.
+3. **Done. Close, reopen and cancel:** `closed_at`, `cancelled_at`, `status` in the responses, `WANT_CLOSED`, `WANT_REOPENED`, `WANT_CANCELLED`; delete becomes cancel. Reopen takes no deadline until step 5.
 4. **Happening:** a fourth status for a want that is live now. The owner starts it (`POST /wants/{id}/start`, `started_at`, under the same lock), which notifies the lineup (`WANT_STARTED`). While it is happening the lineup is fixed, as when closed; it ends when the owner closes or cancels it. Later, an owner setting may keep a want joinable while it is happening, with its own rules.
 5. **Deadline and expiry job:** `expires_at`, signups refused after it, and automatic closing at the deadline.
 6. **Optional: live updates over SSE**, if polling is too slow.

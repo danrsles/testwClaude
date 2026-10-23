@@ -23,13 +23,14 @@ function seats(text: string, min: number): number | null {
 
 /**
  * The whole wants screen: the add form, the category filter, and the list,
- * where the signed-in user's own rows are editable in place and everyone
- * else's can be signed up for. Server state comes from useWants; everything
- * held here is UI state belonging to this screen.
+ * where the signed-in user's own rows can be edited, closed, reopened and
+ * cancelled, and everyone else's active ones signed up for. Server state
+ * comes from useWants; everything held here is UI state belonging to this
+ * screen.
  */
 export default function Wants() {
   const [filter, setFilter] = useState<Category | ''>('')
-  const { wants, loading, error, refresh, add, update, remove, signUp, withdraw } = useWants(filter)
+  const { wants, loading, error, refresh, add, update, close, reopen, cancel, signUp, withdraw } = useWants(filter)
   // Your picture beside your wants comes from the API, so reload the list as
   // soon as you change it in Clerk's account menu.
   useOnPictureChange(refresh)
@@ -67,6 +68,18 @@ export default function Wants() {
     const raised = count === want.capacity ? undefined : count
     // Leave the row open on failure so the edit is not silently lost.
     if (await update(want.id, text, want.category, raised)) setEditingId(null)
+  }
+
+  // Unlike closing, which Reopen undoes, cancelling is final and tells the
+  // whole lineup, so it asks first. Not "Cancel …?": the dialog's own Cancel
+  // button would then mean "don't".
+  function confirmCancel(want: Want) {
+    const others = want.seatsTaken - 1
+    const told =
+      others > 0 ? ` The ${others} other ${others === 1 ? 'person' : 'people'} signed up will be told.` : ''
+    if (window.confirm(`Call off '${want.message}' for good?${told} This can't be undone.`)) {
+      cancel(want.id)
+    }
   }
 
   return (
@@ -200,7 +213,15 @@ export default function Wants() {
                 {want.seatsTaken} / {want.capacity} seats
               </span>
 
-              <span className="ml-auto flex gap-1.5">
+              {want.status === 'CLOSED' && (
+                // Filled and borderless like the category tag, so it reads as a status, not a button.
+                <span className="rounded-full bg-stone-200 px-2 py-0.5 text-xs font-semibold tracking-wider text-stone-700 dark:bg-stone-800 dark:text-stone-300">
+                  Closed
+                </span>
+              )}
+
+              {/* Wraps rather than spilling out of the card on narrow phones. */}
+              <span className="ml-auto flex flex-wrap justify-end gap-1.5 whitespace-nowrap">
                 {editingId === want.id ? (
                   <>
                     <button onClick={() => saveEdit(want)} className="btn px-2.5 py-1.5 text-sm">
@@ -215,38 +236,51 @@ export default function Wants() {
                   </>
                 ) : isMine(want) ? (
                   <>
-                    <select
-                      value={want.category}
-                      onChange={(e) =>
-                        update(want.id, want.message, e.target.value as Category)
-                      }
-                      aria-label="Change category"
-                      className="field px-2 py-1.5 text-sm"
-                    >
-                      {CATEGORIES.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
+                    {/* A closed want can't be edited until it is reopened. Tested
+                        as CLOSED, not "not ACTIVE", so an unknown status keeps the controls. */}
+                    {want.status === 'CLOSED' ? (
+                      <button onClick={() => reopen(want.id)} className="btn px-2.5 py-1.5 text-sm">
+                        Reopen
+                      </button>
+                    ) : (
+                      <>
+                        <select
+                          value={want.category}
+                          onChange={(e) =>
+                            update(want.id, want.message, e.target.value as Category)
+                          }
+                          aria-label="Change category"
+                          className="field px-2 py-1.5 text-sm"
+                        >
+                          {CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => {
+                            setEditingId(want.id)
+                            setDraft(want.message)
+                            setDraftCapacity(String(want.capacity))
+                          }}
+                          className="btn px-2.5 py-1.5 text-sm"
+                        >
+                          Edit
+                        </button>
+                        <button onClick={() => close(want.id)} className="btn px-2.5 py-1.5 text-sm">
+                          Close
+                        </button>
+                      </>
+                    )}
                     <button
-                      onClick={() => {
-                        setEditingId(want.id)
-                        setDraft(want.message)
-                        setDraftCapacity(String(want.capacity))
-                      }}
-                      className="btn px-2.5 py-1.5 text-sm"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => remove(want.id)}
+                      onClick={() => confirmCancel(want)}
                       className="btn px-2.5 py-1.5 text-sm text-red-700 hover:border-red-600 dark:text-red-400"
                     >
-                      Delete
+                      Cancel want
                     </button>
                   </>
-                ) : want.signedUp ? (
+                ) : want.status === 'CLOSED' ? null : want.signedUp ? (
                   <button onClick={() => withdraw(want.id)} className="btn px-2.5 py-1.5 text-sm">
                     Withdraw
                   </button>

@@ -40,6 +40,12 @@ function describe(n: Notification): string {
       return n.previousMessage === null
         ? `updated ${want}`
         : `renamed '${n.previousMessage}' to ${want}`
+    case 'WANT_CLOSED':
+      return `closed ${want}`
+    case 'WANT_REOPENED':
+      return `reopened ${want}`
+    case 'WANT_CANCELLED':
+      return `cancelled ${want}`
   }
 }
 

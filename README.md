@@ -201,7 +201,7 @@ curl -X POST   -H "Authorization: Bearer $TOKEN" localhost:8080/wants/7/signups
 curl -X DELETE -H "Authorization: Bearer $TOKEN" localhost:8080/wants/7/signups
 ```
 
-On the screen, **Delete** now cancels. There are no Close or Reopen buttons yet, and the notifications page doesn't word the three new types yet; the next frontend PR adds both. After that comes a fourth status, `HAPPENING`, for a want that is live; the plan is in [docs/design/wants-signups-and-notifications.md](docs/design/wants-signups-and-notifications.md).
+On the screen, your own active wants have **Close** and **Cancel want**, and closed ones **Reopen** and **Cancel want**. Cancel asks you to confirm first, since it can't be undone. Closed wants are labelled "Closed" for everyone, and the notifications page says who closed, reopened or cancelled which want. Next comes a fourth status, `HAPPENING`, for a want that is live; the plan is in [docs/design/wants-signups-and-notifications.md](docs/design/wants-signups-and-notifications.md).
 
 ### Follows
 

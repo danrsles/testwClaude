@@ -27,7 +27,20 @@ export async function updateWant(id: number, body: WantRequest): Promise<Want> {
   return response.ok ? response.json() : fail(response)
 }
 
-export async function deleteWant(id: number): Promise<void> {
+/** Fixes the lineup. Owner only; Reopen undoes it. Idempotent. */
+export async function closeWant(id: number): Promise<Want> {
+  const response = await authFetch(`${BASE}/${id}/close`, { method: 'POST' })
+  return response.ok ? response.json() : fail(response)
+}
+
+/** Takes signups again. Owner only. Idempotent. */
+export async function reopenWant(id: number): Promise<Want> {
+  const response = await authFetch(`${BASE}/${id}/reopen`, { method: 'POST' })
+  return response.ok ? response.json() : fail(response)
+}
+
+/** DELETE cancels: final, and the want leaves the feed, but the row is kept. Owner only. */
+export async function cancelWant(id: number): Promise<void> {
   const response = await authFetch(`${BASE}/${id}`, { method: 'DELETE' })
   if (!response.ok) await fail(response)
 }

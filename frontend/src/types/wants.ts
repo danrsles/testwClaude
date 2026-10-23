@@ -3,6 +3,13 @@ export const CATEGORIES = ['FOOD', 'MOVIE', 'GAME', 'TRIP'] as const
 export type Category = (typeof CATEGORIES)[number]
 
 /**
+ * Only an ACTIVE want takes signups, withdrawals and edits. CLOSED has a
+ * fixed lineup until the owner reopens it; CANCELLED is final and never in
+ * the feed. Full is not a status: it is seatsTaken >= capacity.
+ */
+export type WantStatus = 'ACTIVE' | 'CLOSED' | 'CANCELLED'
+
+/**
  * The signed-in user, from GET /me, every field copied from Clerk. The API
  * only ever returns your own, so the private fields are yours.
  */
@@ -37,6 +44,7 @@ export interface Want {
   seatsTaken: number
   /** Whether you hold a seat; always true on your own wants. */
   signedUp: boolean
+  status: WantStatus
 }
 
 /** The owner is whoever is signed in, so there is no userId. */
@@ -56,4 +64,5 @@ export interface SignupEventDetails {
   /** Usernames only, the owner included. */
   lineup: string[]
   signedUp: boolean
+  status: WantStatus
 }
