@@ -24,9 +24,21 @@ The Vite dev server serves the app on http://localhost:5173 and proxies `/api/*`
 - Check with `curl -s -o /dev/null -w "%{http_code}" http://localhost:5173`. If it is not up, start it in the background from `frontend/` with `npm run dev` and wait until it answers.
 - If the API on 8080 is down, screens that load data will show their error state. Review that state as it is — it is a real state users see — and say in your report that the API was not running. Do not try to start the backend or the database.
 
-## 3. Do not change real data
+## 3. Change data only in the local database
 
-The Wants and People screens talk to a real PostgreSQL database. **Never submit the add form, save an edit, change a want's category, press Delete, or press Follow or Unfollow on People** unless the person who asked you explicitly allowed it. You may type into fields, open the edit row and cancel it, hover, focus and tab — anything that does not send a write to the API. For states you cannot reach safely (empty list, loading, failed save), read the code that renders them and review that instead, saying that you did.
+Buttons that write (Add, Save, a category change, Close, Reopen, Cancel want, Sign up, Withdraw, Follow, Unfollow) are allowed **only when the API is on the `local` profile**, whose database is the disposable Docker container `demo-postgres` (reset with `docker compose down -v`). `config/application-prod.properties` exists on this machine, so the same port can be serving Aiven, the real database. Prove which before the first write:
+
+1. On the Wants screen, pick a want **not** owned by `dani`, `alex`, `sam` or `jordan`. Those are seeded into every database, so they prove nothing.
+2. Run `docker exec demo-postgres psql -U wants -d wants -tAc "select id from wants where message = '<its message>'"`. Escape any single quote in the message by doubling it.
+3. A row back means the API reads the local database: writes are allowed. No row, no such container, or no want to check means **treat it as the real database**: make no writes at all, and say so in the report.
+
+When writes are allowed:
+- Create what you test on. Add your own want named `[review] <purpose>` and close, reopen and cancel that one. Don't close or cancel other wants; cancelling is final.
+- Leave other people's state as you found it: withdraw after signing up, unfollow after following, and the reverse.
+- After each write, check it landed with a read-only `select` (for example, that `closed_at` is set after Close) and report what you saw. That makes the review a test of what the screen does, not only how it looks.
+- Never write to the database with SQL; `select` only. Never change the Clerk account (name, picture): that is not local.
+
+Without writes, you may still type into fields, open the edit row and cancel it, hover, focus and tab. For states you cannot reach (loading, a failed save), read the code that renders them and say that you did.
 
 ## 4. Look at it in the browser
 
