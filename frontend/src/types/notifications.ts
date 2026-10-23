@@ -1,5 +1,13 @@
 /** What a notification is about. WANT_CREATED is sent to yourself, so its actor is you. */
-export type NotificationType = 'FOLLOW' | 'WANT_CREATED' | 'WANT_SIGNUP' | 'WANT_WITHDRAWN' | 'WANT_UPDATED'
+export type NotificationType =
+  | 'FOLLOW'
+  | 'WANT_CREATED'
+  | 'WANT_SIGNUP'
+  | 'WANT_WITHDRAWN'
+  | 'WANT_UPDATED'
+  | 'WANT_CLOSED'
+  | 'WANT_REOPENED'
+  | 'WANT_CANCELLED'
 
 /** Someone who did something you are told about: public fields only. */
 export interface Actor {

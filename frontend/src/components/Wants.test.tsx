@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getToken } from '@clerk/react'
 import { getMe } from '../api/me'
-import { createWant, deleteWant, listWants, signUp, updateWant, withdraw } from '../api/wants'
+import { cancelWant, closeWant, createWant, listWants, reopenWant, signUp, updateWant, withdraw } from '../api/wants'
 import placeholder from '../assets/avatar-placeholder.svg'
 import MeProvider from '../hooks/MeProvider'
 import type { Category, User, Want } from '../types/wants'
@@ -17,7 +17,9 @@ vi.mock('../api/wants', () => ({
   listWants: vi.fn(),
   createWant: vi.fn(),
   updateWant: vi.fn(),
-  deleteWant: vi.fn(),
+  cancelWant: vi.fn(),
+  closeWant: vi.fn(),
+  reopenWant: vi.fn(),
   signUp: vi.fn(),
   withdraw: vi.fn(),
 }))
@@ -38,17 +40,17 @@ vi.mock('@clerk/react', () => ({
 const DANI: User = { id: 1, username: 'dani', clerkId: 'user_dani', email: null, lastSignInAt: null, imageUrl: null }
 const SAM: User = { id: 2, username: 'sam', clerkId: 'user_sam', email: null, lastSignInAt: null, imageUrl: 'https://img.clerk.com/sam.jpg' }
 
-// A want for one with only its owner seated, unless `seats` says otherwise.
+// An active want for one with only its owner seated, unless `seats` says otherwise.
 function want(
   id: number,
   message: string,
   category: Category = 'FOOD',
   owner = DANI,
-  seats: Partial<Pick<Want, 'capacity' | 'seatsTaken' | 'signedUp'>> = {},
+  seats: Partial<Pick<Want, 'capacity' | 'seatsTaken' | 'signedUp' | 'status'>> = {},
 ): Want {
   return {
     id, message, category, userId: owner.id, username: owner.username, imageUrl: owner.imageUrl,
-    capacity: 1, seatsTaken: 1, signedUp: owner === DANI, ...seats,
+    capacity: 1, seatsTaken: 1, signedUp: owner === DANI, status: 'ACTIVE', ...seats,
   }
 }
 
@@ -151,14 +153,132 @@ describe('Wants', () => {
     })
   })
 
-  it('deletes a want', async () => {
-    vi.mocked(deleteWant).mockResolvedValue(undefined)
+  it('cancels a want and reloads the list', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.mocked(cancelWant).mockResolvedValue(undefined)
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click((await screen.findAllByRole('button', { name: 'Delete' }))[0])
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Cancel want' }))
 
-    expect(deleteWant).toHaveBeenCalledWith(1)
+    expect(cancelWant).toHaveBeenCalledWith(1)
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it('asks before cancelling, and cancels nothing if you say no', async () => {
+    // Cancelling is final and tells the whole lineup, unlike closing, which Reopen undoes.
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Cancel want' }))
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Ramen downtown'))
+    expect(cancelWant).not.toHaveBeenCalled()
+  })
+
+  it('says how many others will hear of a cancel, and nobody when you are alone', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 4, seatsTaken: 3 }),
+      want(2, 'Dune Part Two', 'MOVIE'),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Cancel want' }))
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('The 2 other people signed up will be told.'))
+
+    await userEvent.click(within(row('Dune Part Two')).getByRole('button', { name: 'Cancel want' }))
+    expect(confirm).toHaveBeenLastCalledWith(expect.not.stringContaining('told'))
+  })
+
+  it('treats a want without a status as active', async () => {
+    // An API from before statuses sends none: the row must work as it did then.
+    const legacy = (w: Want) => ({ ...w, status: undefined }) as unknown as Want
+    vi.mocked(listWants).mockResolvedValue([
+      legacy(want(1, 'Ramen downtown')),
+      legacy(want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4 })),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' })).toBeEnabled()
+    expect(within(row('Ramen downtown')).queryByRole('button', { name: 'Reopen' })).not.toBeInTheDocument()
+    expect(within(row('Dune Part Two')).getByRole('button', { name: 'Sign up' })).toBeEnabled()
+  })
+
+  it("offers Close on your own active wants, but not on other people's", async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown'),
+      want(2, 'Dune Part Two', 'MOVIE', SAM),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Close' })).toBeEnabled()
+    expect(within(row('Dune Part Two')).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+  })
+
+  it('closes a want and reloads the list', async () => {
+    vi.mocked(closeWant).mockResolvedValue(want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Close' }))
+
+    expect(closeWant).toHaveBeenCalledWith(1)
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it('shows Closed on a closed want', async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' }),
+      want(2, 'Dune Part Two', 'MOVIE', SAM),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(within(row('Ramen downtown')).getByText('Closed')).toBeInTheDocument()
+    expect(within(row('Dune Part Two')).queryByText('Closed')).not.toBeInTheDocument()
+  })
+
+  it('offers Reopen instead of Close, and no Edit or category change, on your closed wants', async () => {
+    // Editing a closed want is a 409 until it is reopened.
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' })])
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    expect(screen.getByRole('button', { name: 'Reopen' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Change category')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel want' })).toBeEnabled()
+  })
+
+  it('reopens a want and reloads the list', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' })])
+    vi.mocked(reopenWant).mockResolvedValue(want(1, 'Ramen downtown'))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+
+    expect(reopenWant).toHaveBeenCalledWith(1)
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it("offers neither Sign up nor Withdraw on someone else's closed want", async () => {
+    // The lineup is fixed: both are a 409 until the owner reopens it.
+    vi.mocked(listWants).mockResolvedValue([
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4, status: 'CLOSED' }),
+      want(3, 'Catan night', 'GAME', SAM, { capacity: 4, seatsTaken: 2, signedUp: true, status: 'CLOSED' }),
+    ])
+    renderWants()
+    await screen.findByText('Catan night')
+
+    expect(screen.queryByRole('button', { name: 'Sign up' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Withdraw' })).not.toBeInTheDocument()
   })
 
   it("offers edit controls only on the signed-in user's own wants", async () => {
@@ -171,7 +291,7 @@ describe('Wants', () => {
 
     // One set of controls, for dani's want; sam's row is read-only.
     expect(await screen.findAllByRole('button', { name: 'Edit' })).toHaveLength(1)
-    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Cancel want' })).toHaveLength(1)
     expect(screen.getAllByLabelText('Change category')).toHaveLength(1)
   })
 
@@ -282,7 +402,7 @@ describe('Wants', () => {
   it('signs up and reloads the list', async () => {
     vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4 })])
     vi.mocked(signUp).mockResolvedValue({
-      wantId: 2, message: 'Dune Part Two', capacity: 4, seatsTaken: 2, lineup: ['sam', 'dani'], signedUp: true,
+      wantId: 2, message: 'Dune Part Two', capacity: 4, seatsTaken: 2, lineup: ['sam', 'dani'], signedUp: true, status: 'ACTIVE',
     })
     renderWants()
     await screen.findByText('Dune Part Two')
@@ -309,7 +429,7 @@ describe('Wants', () => {
       want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4, seatsTaken: 2, signedUp: true }),
     ])
     vi.mocked(withdraw).mockResolvedValue({
-      wantId: 2, message: 'Dune Part Two', capacity: 4, seatsTaken: 1, lineup: ['sam'], signedUp: false,
+      wantId: 2, message: 'Dune Part Two', capacity: 4, seatsTaken: 1, lineup: ['sam'], signedUp: false, status: 'ACTIVE',
     })
     renderWants()
     await screen.findByText('Dune Part Two')

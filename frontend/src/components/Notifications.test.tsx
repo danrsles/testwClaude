@@ -216,6 +216,27 @@ describe('Notifications', () => {
     expect(await screen.findByRole('listitem')).toHaveTextContent("sam updated 'Pizza Friday'")
   })
 
+  it('says who closed which want', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_CLOSED', 'sam')])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("sam closed 'Pizza Friday'")
+  })
+
+  it('says who reopened which want', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_REOPENED', 'sam')])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("sam reopened 'Pizza Friday'")
+  })
+
+  it('says who cancelled which want', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_CANCELLED', 'sam')])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("sam cancelled 'Pizza Friday'")
+  })
+
   it('goes to the page from the bell', async () => {
     vi.mocked(listNotifications).mockResolvedValue([followedBy(1, 'alex')])
     renderAt('/')
