@@ -289,6 +289,49 @@ class WantControllerTest {
     }
 
     @Test
+    void startReturnsTheWantAsHappening() throws Exception {
+        Want started = new Want("Pizza Friday", Category.FOOD, dani, 4);
+        started.start(Instant.parse("2026-10-23T19:00:00Z"));
+        given(wantService.start(1L, DANI)).willReturn(seated(started));
+
+        mockMvc.perform(post("/wants/1/start").with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Pizza Friday"))
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.happening").value(true));
+    }
+
+    @Test
+    void endReturnsTheWantAsEnded() throws Exception {
+        Want ended = new Want("Pizza Friday", Category.FOOD, dani, 4);
+        ended.start(Instant.parse("2026-10-23T19:00:00Z"));
+        ended.end(Instant.parse("2026-10-23T22:00:00Z"));
+        given(wantService.end(1L, DANI)).willReturn(seated(ended));
+
+        mockMvc.perform(post("/wants/1/end").with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ENDED"))
+                .andExpect(jsonPath("$.happening").value(false));
+    }
+
+    @Test
+    void startAndEndRequireAToken() throws Exception {
+        mockMvc.perform(post("/wants/1/start")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/wants/1/end")).andExpect(status().isUnauthorized());
+
+        then(wantService).should(never()).start(any(), any());
+        then(wantService).should(never()).end(any(), any());
+    }
+
+    @Test
+    void startingSomeoneElsesWantIsForbidden() throws Exception {
+        given(wantService.start(2L, DANI)).willThrow(new WantForbiddenException(2L));
+
+        mockMvc.perform(post("/wants/2/start").with(signedInAsDani()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void deletingUnknownWantIsNotFound() throws Exception {
         BDDMockito.willThrow(new WantNotFoundException(99L)).given(wantService).cancel(99L, DANI);
 

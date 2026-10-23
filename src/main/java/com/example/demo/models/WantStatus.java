@@ -9,6 +9,8 @@ public enum WantStatus {
     ACTIVE,
     /** The owner fixed the lineup; they can reopen it or cancel it. */
     CLOSED,
+    /** It happened and the owner ended it. Final, but it stays in the feed. */
+    ENDED,
     /** Called off by the owner and hidden from the feed. Final. */
     CANCELLED
 }

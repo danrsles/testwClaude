@@ -13,10 +13,11 @@ import com.example.demo.models.WantStatus;
  *
  * seatsTaken counts the owner; signedUp says whether the person asking holds
  * a seat. Neither is on the entity, so WantService works them out. status
- * is ACTIVE, CLOSED or CANCELLED; a full want is still ACTIVE.
+ * is ACTIVE, CLOSED, ENDED or CANCELLED; a full want is still ACTIVE.
+ * happening says it is live now, whatever its status says about joining.
  */
 public record WantResponse(Long id, String message, Category category, Long userId, String username,
-        String imageUrl, int capacity, int seatsTaken, boolean signedUp, WantStatus status) {
+        String imageUrl, int capacity, int seatsTaken, boolean signedUp, WantStatus status, boolean happening) {
 
     public static WantResponse from(Want want, int seatsTaken, boolean signedUp) {
         return new WantResponse(
@@ -29,6 +30,7 @@ public record WantResponse(Long id, String message, Category category, Long user
                 want.getCapacity(),
                 seatsTaken,
                 signedUp,
-                want.getStatus());
+                want.getStatus(),
+                want.isHappening());
     }
 }

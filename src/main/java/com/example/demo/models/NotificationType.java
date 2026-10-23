@@ -17,5 +17,9 @@ public enum NotificationType {
     /** The actor, the owner, reopened a closed want the recipient is signed up for. */
     WANT_REOPENED,
     /** The actor, the owner, cancelled a want the recipient is signed up for. */
-    WANT_CANCELLED
+    WANT_CANCELLED,
+    /** The actor, the owner, started a want the recipient is signed up for: it is happening now. */
+    WANT_STARTED,
+    /** The actor, the owner, ended a happening want the recipient is signed up for. */
+    WANT_ENDED
 }
