@@ -235,7 +235,7 @@ export default function Wants() {
                         as CLOSED, not "not ACTIVE", so an unknown status keeps the controls. */}
                     {want.status === 'CLOSED' ? (
                       <button onClick={() => reopen(want.id)} className="btn px-2.5 py-1.5 text-sm">
-                        Reopen
+                        Reopen signups
                       </button>
                     ) : (
                       <>
@@ -262,7 +262,7 @@ export default function Wants() {
                           Edit
                         </button>
                         <button onClick={() => close(want.id)} className="btn px-2.5 py-1.5 text-sm">
-                          Close
+                          Close signups
                         </button>
                       </>
                     )}

@@ -217,17 +217,17 @@ describe('Wants', () => {
     await screen.findByText('Dune Part Two')
 
     expect(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' })).toBeEnabled()
-    expect(within(row('Ramen downtown')).queryByRole('button', { name: 'Reopen' })).not.toBeInTheDocument()
+    expect(within(row('Ramen downtown')).queryByRole('button', { name: 'Reopen signups' })).not.toBeInTheDocument()
     expect(within(row('Dune Part Two')).getByRole('button', { name: 'Sign up' })).toBeEnabled()
   })
 
-  it("offers Close on your own active wants, but not on other people's", async () => {
+  it("offers Close signups on your own active wants, but not on other people's", async () => {
     vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown'), want(2, 'Dune Part Two', 'MOVIE', SAM)])
     renderWants()
     await screen.findByText('Dune Part Two')
 
-    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Close' })).toBeEnabled()
-    expect(within(row('Dune Part Two')).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Close signups' })).toBeEnabled()
+    expect(within(row('Dune Part Two')).queryByRole('button', { name: 'Close signups' })).not.toBeInTheDocument()
   })
 
   it('closes a want and reloads the list', async () => {
@@ -235,7 +235,7 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Close' }))
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Close signups' }))
 
     expect(closeWant).toHaveBeenCalledWith(1)
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
@@ -253,14 +253,14 @@ describe('Wants', () => {
     expect(within(row('Dune Part Two')).queryByText('Closed')).not.toBeInTheDocument()
   })
 
-  it('offers Reopen instead of Close, and no Edit or category change, on your closed wants', async () => {
+  it('offers Reopen signups instead of Close signups, and no Edit or category change, on your closed wants', async () => {
     // Editing a closed want is a 409 until it is reopened.
     vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' })])
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    expect(screen.getByRole('button', { name: 'Reopen' })).toBeEnabled()
-    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reopen signups' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Close signups' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Change category')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Cancel want' })).toBeEnabled()
@@ -272,7 +272,7 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Reopen signups' }))
 
     expect(reopenWant).toHaveBeenCalledWith(1)
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
