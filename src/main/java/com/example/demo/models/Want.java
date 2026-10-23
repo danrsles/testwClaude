@@ -44,6 +44,14 @@ public class Want {
     @Column(name = "cancelled_at")
     private Instant cancelledAt;
 
+    /** When the owner started it, so it is happening; null until then. */
+    @Column(name = "started_at")
+    private Instant startedAt;
+
+    /** When the owner ended it after it happened; null unless ended. Final: nothing clears it. */
+    @Column(name = "ended_at")
+    private Instant endedAt;
+
     protected Want() {
     }
 
@@ -94,10 +102,17 @@ public class Want {
         this.capacity = capacity;
     }
 
-    /** Cancelled outranks closed: a want closed and then cancelled is CANCELLED. */
+    /**
+     * Cancelled outranks ended, which outranks closed: a want closed, then
+     * started and ended, is ENDED. Whether it is happening is not a status;
+     * see isHappening.
+     */
     public WantStatus getStatus() {
         if (cancelledAt != null) {
             return WantStatus.CANCELLED;
+        }
+        if (endedAt != null) {
+            return WantStatus.ENDED;
         }
         return closedAt != null ? WantStatus.CLOSED : WantStatus.ACTIVE;
     }
@@ -112,5 +127,21 @@ public class Want {
 
     public void cancel(Instant at) {
         this.cancelledAt = at;
+    }
+
+    /**
+     * Live now: started, and neither ended nor cancelled. Independent of
+     * closing, so an active want can be happening and still take signups.
+     */
+    public boolean isHappening() {
+        return startedAt != null && endedAt == null && cancelledAt == null;
+    }
+
+    public void start(Instant at) {
+        this.startedAt = at;
+    }
+
+    public void end(Instant at) {
+        this.endedAt = at;
     }
 }

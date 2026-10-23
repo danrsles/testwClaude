@@ -1,5 +1,6 @@
 package com.example.demo.services;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -100,17 +101,40 @@ class WantServiceTest {
     }
 
     @Test
-    void onlyTheOwnerMayCloseReopenOrCancel() {
+    void onlyTheOwnerMayCloseReopenStartEndOrCancel() {
         Want want = new Want("Ramen", Category.FOOD, dani);
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
 
         assertThatThrownBy(() -> wantService.close(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
         assertThatThrownBy(() -> wantService.reopen(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
+        assertThatThrownBy(() -> wantService.start(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
+        assertThatThrownBy(() -> wantService.end(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
         assertThatThrownBy(() -> wantService.cancel(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
 
         assertThat(want.getStatus()).isEqualTo(WantStatus.ACTIVE);
+        assertThat(want.isHappening()).isFalse();
         then(notificationService).shouldHaveNoInteractions();
         then(wantRepository).should(never()).delete(any());
+    }
+
+    @Test
+    void aNewWantIsNotHappening() {
+        Want want = new Want("Ramen", Category.FOOD, dani);
+
+        assertThat(want.isHappening()).isFalse();
+        assertThat(want.getStatus()).isEqualTo(WantStatus.ACTIVE);
+    }
+
+    @Test
+    void anEndedWantIsEndedEvenIfItWasClosed() {
+        // Status checks cancelled, then ended, then closed, then active.
+        Want want = new Want("Ramen", Category.FOOD, dani);
+        want.start(Instant.parse("2026-10-23T19:00:00Z"));
+        want.close(Instant.parse("2026-10-23T19:30:00Z"));
+        want.end(Instant.parse("2026-10-23T22:00:00Z"));
+
+        assertThat(want.getStatus()).isEqualTo(WantStatus.ENDED);
+        assertThat(want.isHappening()).isFalse();
     }
 
     @Test

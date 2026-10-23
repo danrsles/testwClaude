@@ -21,9 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Each signed-in user sees their own wants and those of the people they
- * follow, but only a want's owner may change, close, reopen or cancel it. The
- * owner is always the signed-in user, identified by the Clerk id from the
- * token, never an id sent in the request.
+ * follow, but only a want's owner may change, close, reopen, start, end or
+ * cancel it. The owner is always the signed-in user, identified by the Clerk
+ * id from the token, never an id sent in the request.
  *
  * Wants come back as WantResponse rather than the entity, because how full a
  * want is and whether you hold a seat are not on the entity: they are counted
@@ -91,7 +91,7 @@ public class WantService {
     public WantResponse update(Long wantId, String message, Category category, Integer capacity,
             ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
-        requireNotCancelled(want);
+        requireNotFinal(want);
         if (want.getStatus() == WantStatus.CLOSED) {
             throw new WantClosedException(wantId);
         }
@@ -121,12 +121,12 @@ public class WantService {
     /**
      * Fixes the lineup: no more signups or withdrawals, and no edits until it
      * is reopened. Tells the lineup, not the owner. Closing a closed want
-     * changes nothing and tells nobody; a cancelled one is a 409.
+     * changes nothing and tells nobody; an ended or cancelled one is a 409.
      */
     @Transactional
     public WantResponse close(Long wantId, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
-        requireNotCancelled(want);
+        requireNotFinal(want);
         if (want.getStatus() == WantStatus.ACTIVE) {
             want.close(Instant.now());
             notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_CLOSED, null);
@@ -136,13 +136,13 @@ public class WantService {
 
     /**
      * Opens a closed want to signups and edits again, and tells the lineup.
-     * Reopening an active want changes nothing and tells nobody; a cancelled
-     * one is a 409.
+     * Reopening an active want changes nothing and tells nobody; an ended or
+     * cancelled one is a 409.
      */
     @Transactional
     public WantResponse reopen(Long wantId, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
-        requireNotCancelled(want);
+        requireNotFinal(want);
         if (want.getStatus() == WantStatus.CLOSED) {
             want.reopen();
             notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_REOPENED, null);
@@ -154,21 +154,68 @@ public class WantService {
      * Calls the want off, active or closed, and tells the lineup. This is
      * what DELETE does: the row stays, with its lineup, so the notifications
      * that point at it still have something to show. It leaves the feed.
-     * Cancelling twice tells nobody twice.
+     * Cancelling twice tells nobody twice. An ended want has already
+     * happened, so it cannot be called off (409).
      */
     @Transactional
     public void cancel(Long wantId, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
-        if (want.getStatus() != WantStatus.CANCELLED) {
+        // A switch expression, so a new status fails to compile until it is given a case here.
+        boolean cancels = switch (want.getStatus()) {
+            case ACTIVE, CLOSED -> true;
+            case CANCELLED -> false;
+            case ENDED -> throw new WantEndedException(wantId);
+        };
+        if (cancels) {
             want.cancel(Instant.now());
             notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_CANCELLED, null);
         }
     }
 
-    /** Cancelling is final: nothing else may happen to the want afterwards. */
-    private static void requireNotCancelled(Want want) {
+    /**
+     * Marks the want as happening now, active or closed, and tells the
+     * lineup. Who can join does not change: an active want still takes
+     * signups, a closed one still does not. Starting a happening want changes
+     * nothing and tells nobody; an ended or cancelled one is a 409.
+     */
+    @Transactional
+    public WantResponse start(Long wantId, ClerkIdentity who) {
+        Want want = requireOwned(wantId, who.clerkId());
+        requireNotFinal(want);
+        if (!want.isHappening()) {
+            want.start(Instant.now());
+            notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_STARTED, null);
+        }
+        return withSeats(want, want.getUser());
+    }
+
+    /**
+     * Ends a happening want, which is final, and tells the lineup. It stays
+     * in the feed as ENDED. Ending an ended want changes nothing and tells
+     * nobody; one that never started is a 409, as is a cancelled one.
+     */
+    @Transactional
+    public WantResponse end(Long wantId, ClerkIdentity who) {
+        Want want = requireOwned(wantId, who.clerkId());
+        if (want.getStatus() == WantStatus.ENDED) {
+            return withSeats(want, want.getUser());
+        }
+        requireNotFinal(want);
+        if (!want.isHappening()) {
+            throw new WantNotHappeningException(wantId);
+        }
+        want.end(Instant.now());
+        notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_ENDED, null);
+        return withSeats(want, want.getUser());
+    }
+
+    /** Cancelling and ending are final: nothing else may happen to the want afterwards. */
+    private static void requireNotFinal(Want want) {
         if (want.getStatus() == WantStatus.CANCELLED) {
             throw new WantCancelledException(want.getId());
+        }
+        if (want.getStatus() == WantStatus.ENDED) {
+            throw new WantEndedException(want.getId());
         }
     }
 

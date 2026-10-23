@@ -66,6 +66,16 @@ public class WantController {
         return wantService.reopen(id, Identities.of(jwt));
     }
 
+    @PostMapping("/{id}/start")
+    public WantResponse start(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return wantService.start(id, Identities.of(jwt));
+    }
+
+    @PostMapping("/{id}/end")
+    public WantResponse end(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return wantService.end(id, Identities.of(jwt));
+    }
+
     /** Cancels rather than deletes: see WantService.cancel. */
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)

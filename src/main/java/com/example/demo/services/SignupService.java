@@ -111,9 +111,11 @@ public class SignupService {
                 && !wantRepository.isInFeed(want.getId(), me.getId())) {
             throw new WantNotFoundException(want.getId());
         }
-        throw want.getStatus() == WantStatus.CANCELLED
-                ? new WantCancelledException(want.getId())
-                : new WantClosedException(want.getId());
+        throw switch (want.getStatus()) {
+            case CANCELLED -> new WantCancelledException(want.getId());
+            case ENDED -> new WantEndedException(want.getId());
+            default -> new WantClosedException(want.getId());
+        };
     }
 
     private SignupEventDetails details(Want want, User me) {
