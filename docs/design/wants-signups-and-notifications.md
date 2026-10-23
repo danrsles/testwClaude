@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: steps 1 to 3 built (notifications for follows; capacity and signups; close, reopen and cancel); step 4 (happening) built in the API, its screen next; steps 5 to 8 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: steps 1 to 4 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended); steps 5 to 8 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 
@@ -132,7 +132,7 @@ Each step is one PR and works without the ones after it.
 1. **Done. Notifications foundation:** the table, `GET /notifications`, `POST /notifications/read`, the bell in the header with an unread count and 30-second polling (on TanStack Query, shared by the bell and the page), and `FOLLOW` (which needs `followIfAbsent` to return the rows it inserted).
 2. **Done. Capacity and signups:** `wants.capacity`, `want_signups`, the owner's automatic seat, signing up and withdrawing, seats in the feed, and `WANT_CREATED`, `WANT_SIGNUP`, `WANT_WITHDRAWN` and `WANT_UPDATED`.
 3. **Done. Close, reopen and cancel:** `closed_at`, `cancelled_at`, `status` in the responses, `WANT_CLOSED`, `WANT_REOPENED`, `WANT_CANCELLED`; delete becomes cancel. Reopen takes no deadline until step 6.
-4. **Built in the API; the screen next. Happening and ended:** `started_at`, `ended_at`, the `happening` flag and the `ENDED` status, `POST /wants/{id}/start` and `/end` under the same lock, `WANT_STARTED` and `WANT_ENDED`. Then Start and End buttons, the labels and the notification texts.
+4. **Done. Happening and ended:** `started_at`, `ended_at`, the `happening` flag and the `ENDED` status, `POST /wants/{id}/start` and `/end` under the same lock, `WANT_STARTED` and `WANT_ENDED`. The screen has Start and End buttons, "Happening now" and "Ended" labels, and texts for both notifications.
 5. **Open invite:** a want with no seat limit, so anyone who can see it may join.
 6. **Deadline and expiry job:** `expires_at`, signups refused after it, and automatic closing at the deadline.
 7. **Optional: live updates over SSE**, if polling is too slow.
