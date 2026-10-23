@@ -39,6 +39,18 @@ export async function reopenWant(id: number): Promise<Want> {
   return response.ok ? response.json() : fail(response)
 }
 
+/** Marks it happening, without changing who can join. Owner only. Idempotent. */
+export async function startWant(id: number): Promise<Want> {
+  const response = await authFetch(`${BASE}/${id}/start`, { method: 'POST' })
+  return response.ok ? response.json() : fail(response)
+}
+
+/** Makes a happening want ENDED, which is final. Owner only. Idempotent. */
+export async function endWant(id: number): Promise<Want> {
+  const response = await authFetch(`${BASE}/${id}/end`, { method: 'POST' })
+  return response.ok ? response.json() : fail(response)
+}
+
 /** DELETE cancels: final, and the want leaves the feed, but the row is kept. Owner only. */
 export async function cancelWant(id: number): Promise<void> {
   const response = await authFetch(`${BASE}/${id}`, { method: 'DELETE' })

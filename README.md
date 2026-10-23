@@ -205,7 +205,7 @@ curl -X POST   -H "Authorization: Bearer $TOKEN" localhost:8080/wants/7/signups
 curl -X DELETE -H "Authorization: Bearer $TOKEN" localhost:8080/wants/7/signups
 ```
 
-On the screen, your own active wants have **Close** and **Cancel want**, and closed ones **Reopen** and **Cancel want**. Cancel asks you to confirm first, since it can't be undone. Closed wants are labelled "Closed" for everyone, and the notifications page says who closed, reopened or cancelled which want. Starting and ending work in the API; their buttons come next. The plan is in [docs/design/wants-signups-and-notifications.md](docs/design/wants-signups-and-notifications.md).
+On the screen, your own active wants have **Close** and **Cancel want**, and closed ones **Reopen** and **Cancel want**. Both also have **Start**, which marks the want "Happening now" without changing who can join, so others can still sign up to an active want that is live. Once started, **End** replaces Start. Cancel and End ask you to confirm first, since neither can be undone. Closed wants are labelled "Closed" for everyone. Ended ones are labelled "Ended" and have no buttons for anyone. The notifications page says who closed, reopened, started, ended or cancelled which want. The plan is in [docs/design/wants-signups-and-notifications.md](docs/design/wants-signups-and-notifications.md).
 
 ### Follows
 

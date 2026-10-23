@@ -8,6 +8,8 @@ export type NotificationType =
   | 'WANT_CLOSED'
   | 'WANT_REOPENED'
   | 'WANT_CANCELLED'
+  | 'WANT_STARTED'
+  | 'WANT_ENDED'
 
 /** Someone who did something you are told about: public fields only. */
 export interface Actor {

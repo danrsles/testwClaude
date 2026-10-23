@@ -44,6 +44,10 @@ function describe(n: Notification): string {
       return `reopened ${want}`
     case 'WANT_CANCELLED':
       return `cancelled ${want}`
+    case 'WANT_STARTED':
+      return `started ${want}`
+    case 'WANT_ENDED':
+      return `ended ${want}`
   }
 }
 
