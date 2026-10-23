@@ -50,6 +50,8 @@ jobs:
 
       - run: npm ci
       - run: npm run lint
+      # Catches files formatted without the Claude hook, e.g. edited by hand.
+      - run: npm run format:check
       # The component tests stub the api module, so no backend is needed.
       - run: npm test
       # Type-checks (tsc -b) and bundles into dist/. Vite compiles the Clerk

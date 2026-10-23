@@ -17,7 +17,7 @@ mvn package                  # build target/demo-0.0.1-SNAPSHOT.jar
 java -jar target/demo-0.0.1-SNAPSHOT.jar       # run the packaged jar
 ```
 
-No linter or formatter is configured for the Java code. The frontend has oxlint and a Vitest suite — see **Frontend** below.
+No linter or formatter is configured for the Java code. The frontend has oxlint, Prettier and a Vitest suite — see **Frontend** below.
 
 Container image:
 
@@ -44,7 +44,11 @@ npm run build      # production bundle into frontend/dist
 npm test           # vitest run — the whole suite once
 npm run test:watch # vitest in watch mode
 npm run lint       # oxlint
+npm run format     # prettier --write .
+npm run format:check
 ```
+
+**Formatting is Prettier** (`.prettierrc.json`: no semicolons, single quotes, 120 columns). `endOfLine` is `auto` because `core.autocrlf` checks files out as CRLF on Windows; with Prettier's default of LF, every file reads as unformatted there. A project hook (`.claude/settings.json` → `.claude/hooks/prettier-format.mjs`) formats each file under `frontend/` after Claude writes it, so a file read straight after an edit may have been reflowed. The formatting commit is listed in `.git-blame-ignore-revs`; run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone so `git blame` skips it.
 
 The dev server proxies `/api/*` to `http://localhost:8080`, stripping the prefix (see `vite.config.ts`). That keeps the browser on a single origin, so **the backend needs no CORS configuration**. Deploying the frontend on a different origin than the API would change that — then Spring would need CORS, or a reverse proxy would have to serve both under one hostname.
 
