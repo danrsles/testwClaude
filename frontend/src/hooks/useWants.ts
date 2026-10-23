@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { cancelWant, closeWant, createWant, listWants, reopenWant, signUp, updateWant, withdraw } from '../api/wants'
+import {
+  cancelWant,
+  closeWant,
+  createWant,
+  endWant,
+  listWants,
+  reopenWant,
+  signUp,
+  startWant,
+  updateWant,
+  withdraw,
+} from '../api/wants'
 import type { Category, Want } from '../types/wants'
 
 function messageOf(e: unknown): string {
@@ -17,6 +28,9 @@ export interface UseWants {
   update: (id: number, message: string, category: Category, capacity?: number) => Promise<boolean>
   close: (id: number) => Promise<boolean>
   reopen: (id: number) => Promise<boolean>
+  start: (id: number) => Promise<boolean>
+  /** Final: an ended want can't be started again. */
+  end: (id: number) => Promise<boolean>
   /** Final: there is no undoing a cancel. */
   cancel: (id: number) => Promise<boolean>
   signUp: (id: number) => Promise<boolean>
@@ -95,6 +109,10 @@ export function useWants(filter: Category | ''): UseWants {
 
   const reopen = useCallback((id: number) => mutate(() => reopenWant(id)), [mutate])
 
+  const start = useCallback((id: number) => mutate(() => startWant(id)), [mutate])
+
+  const end = useCallback((id: number) => mutate(() => endWant(id)), [mutate])
+
   const cancel = useCallback((id: number) => mutate(() => cancelWant(id)), [mutate])
 
   // The list is reloaded afterwards, so the seats shown come from the feed
@@ -103,5 +121,19 @@ export function useWants(filter: Category | ''): UseWants {
 
   const leave = useCallback((id: number) => mutate(() => withdraw(id)), [mutate])
 
-  return { wants, loading, error, refresh, add, update, close, reopen, cancel, signUp: join, withdraw: leave }
+  return {
+    wants,
+    loading,
+    error,
+    refresh,
+    add,
+    update,
+    close,
+    reopen,
+    start,
+    end,
+    cancel,
+    signUp: join,
+    withdraw: leave,
+  }
 }

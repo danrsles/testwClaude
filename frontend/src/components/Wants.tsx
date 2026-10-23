@@ -23,14 +23,15 @@ function seats(text: string, min: number): number | null {
 
 /**
  * The whole wants screen: the add form, the category filter, and the list,
- * where the signed-in user's own rows can be edited, closed, reopened and
- * cancelled, and everyone else's active ones signed up for. Server state
- * comes from useWants; everything held here is UI state belonging to this
- * screen.
+ * where the signed-in user's own rows can be edited, closed, reopened,
+ * started, ended and cancelled, and everyone else's active ones signed up
+ * for. Server state comes from useWants; everything held here is UI state
+ * belonging to this screen.
  */
 export default function Wants() {
   const [filter, setFilter] = useState<Category | ''>('')
-  const { wants, loading, error, refresh, add, update, close, reopen, cancel, signUp, withdraw } = useWants(filter)
+  const { wants, loading, error, refresh, add, update, close, reopen, start, end, cancel, signUp, withdraw } =
+    useWants(filter)
   // Your picture beside your wants comes from the API, so reload the list as
   // soon as you change it in Clerk's account menu.
   useOnPictureChange(refresh)
@@ -78,6 +79,13 @@ export default function Wants() {
     const told = others > 0 ? ` The ${others} other ${others === 1 ? 'person' : 'people'} signed up will be told.` : ''
     if (window.confirm(`Call off '${want.message}' for good?${told} This can't be undone.`)) {
       cancel(want.id)
+    }
+  }
+
+  // Ending is final too: an ended want can't be started again.
+  function confirmEnd(want: Want) {
+    if (window.confirm(`End '${want.message}'? This can't be undone.`)) {
+      end(want.id)
     }
   }
 
@@ -213,13 +221,19 @@ export default function Wants() {
 
               {/* Wraps rather than spilling out of the card on narrow phones. */}
               <span className="ml-auto flex flex-wrap justify-end gap-1.5 whitespace-nowrap">
-                {want.status === 'CLOSED' && (
-                  // Filled and borderless like the category tag, so it reads as a status, not a button.
-                  <span className="self-center rounded-full bg-stone-200 px-2 py-0.5 text-xs font-semibold tracking-wider text-stone-700 dark:bg-stone-800 dark:text-stone-300">
-                    Closed
+                {/* Filled and borderless like the category tag, so they read as a status, not a button. */}
+                {want.happening && (
+                  <span className="self-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                    Happening now
                   </span>
                 )}
-                {editingId === want.id ? (
+                {(want.status === 'CLOSED' || want.status === 'ENDED') && (
+                  <span className="self-center rounded-full bg-stone-200 px-2 py-0.5 text-xs font-semibold tracking-wider text-stone-700 dark:bg-stone-800 dark:text-stone-300">
+                    {want.status === 'CLOSED' ? 'Closed' : 'Ended'}
+                  </span>
+                )}
+                {/* Every change to an ended want is a 409, the owner's included. */}
+                {want.status === 'ENDED' ? null : editingId === want.id ? (
                   <>
                     <button onClick={() => saveEdit(want)} className="btn px-2.5 py-1.5 text-sm">
                       Save
@@ -264,6 +278,16 @@ export default function Wants() {
                           Close
                         </button>
                       </>
+                    )}
+                    {/* Starting doesn't change who can join, so it sits beside Close or Reopen. */}
+                    {want.happening ? (
+                      <button onClick={() => confirmEnd(want)} className="btn px-2.5 py-1.5 text-sm">
+                        End
+                      </button>
+                    ) : (
+                      <button onClick={() => start(want.id)} className="btn px-2.5 py-1.5 text-sm">
+                        Start
+                      </button>
                     )}
                     <button
                       onClick={() => confirmCancel(want)}

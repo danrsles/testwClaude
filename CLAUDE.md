@@ -99,11 +99,12 @@ Which user the app acts as comes from the token, so no component passes a user i
 - Editing offers capacity with `min={want.capacity}`, since the API refuses to lower it, and `saveEdit` sends `capacity` only when it changed. Left out, the API keeps it.
 - `Notifications.tsx`'s `describe()` needs a case for every `NotificationType`, or that type's rows show a name and nothing else. `who()` says "You" for `WANT_CREATED`, whose actor is you.
 
-**Close, reopen and cancel in the UI.** `want.status` drives each row; cancelled wants never reach the feed, so only `ACTIVE` and `CLOSED` are drawn.
+**Close, reopen, start, end and cancel in the UI.** `want.status` (can people join?) and `want.happening` (is it live?) drive each row; cancelled wants never reach the feed, so only `ACTIVE`, `CLOSED` and `ENDED` are drawn.
 - Your active wants get the category menu, **Edit**, **Close** and **Cancel want**. Your closed ones get **Reopen** and **Cancel want** only, since editing a closed want is a 409.
-- A closed row shows a "Closed" label, and other people get neither Sign up nor Withdraw on it.
+- Both also get **Start**, or **End** once happening. Starting doesn't change who can join, so an active happening want still offers Edit to you and Sign up or Withdraw to others. **End** asks first with `window.confirm`, because it is final.
+- A happening row shows "Happening now". A closed row shows a "Closed" label, and other people get neither Sign up nor Withdraw on it. An ended row shows "Ended" and no buttons for anyone, since every change to it is a 409.
 - **Cancel want** asks first with `window.confirm`, because it is final and tells the lineup; Close needs no confirmation, as Reopen undoes it. It is not just "Cancel", which already leaves edit mode. Tests stub it with `vi.spyOn(window, 'confirm')`.
-- `useWants` exposes `close`, `reopen` and `cancel` through `mutate`, like the rest. `api/wants.ts`'s `cancelWant` is the `DELETE`.
+- `useWants` exposes `close`, `reopen`, `start`, `end` and `cancel` through `mutate`, like the rest. `api/wants.ts`'s `cancelWant` is the `DELETE`.
 
 **Picture changes show at once.** The API learns your picture only from the session token, which Clerk otherwise reissues about once a minute. `Wants` therefore calls `useOnPictureChange(refresh)`:
 - The hook watches `useUser().user.imageUrl`. Clerk updates it in the page as soon as you change your picture in its menu.
@@ -144,7 +145,7 @@ State is local `useState`. All server data is refetched after each mutation, whi
 
 ## Architecture
 
-**Planned, partly built:** the design for notifications and for signups on wants with a capacity is in `docs/design/wants-signups-and-notifications.md`. Steps 1 (notifications for follows), 2 (capacity and signups, with their screen) and 3 (close, reopen and cancel, with their buttons) are built and described below, and so is step 4's backend (start and end); its buttons, open invite and expiry are not. Everything below describes the code as it is; move facts here as each step lands.
+**Planned, partly built:** the design for notifications and for signups on wants with a capacity is in `docs/design/wants-signups-and-notifications.md`. Steps 1 (notifications for follows), 2 (capacity and signups, with their screen) and 3 (close, reopen and cancel, with their buttons) are built and described below, and so is step 4's start and end, with their buttons; open invite and expiry are not. Everything below describes the code as it is; move facts here as each step lands.
 
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
 

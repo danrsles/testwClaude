@@ -3,11 +3,13 @@ export const CATEGORIES = ['FOOD', 'MOVIE', 'GAME', 'TRIP'] as const
 export type Category = (typeof CATEGORIES)[number]
 
 /**
- * Only an ACTIVE want takes signups, withdrawals and edits. CLOSED has a
- * fixed lineup until the owner reopens it; CANCELLED is final and never in
- * the feed. Full is not a status: it is seatsTaken >= capacity.
+ * Whether people can join. Only an ACTIVE want takes signups, withdrawals and
+ * edits. CLOSED has a fixed lineup until the owner reopens it; ENDED is final
+ * but stays in the feed; CANCELLED is final and never in the feed. Full is
+ * not a status: it is seatsTaken >= capacity. Whether it is live is a
+ * separate flag, `happening`.
  */
-export type WantStatus = 'ACTIVE' | 'CLOSED' | 'CANCELLED'
+export type WantStatus = 'ACTIVE' | 'CLOSED' | 'ENDED' | 'CANCELLED'
 
 /**
  * The signed-in user, from GET /me, every field copied from Clerk. The API
@@ -45,6 +47,8 @@ export interface Want {
   /** Whether you hold a seat; always true on your own wants. */
   signedUp: boolean
   status: WantStatus
+  /** Started by the owner and not yet ended. Says nothing about who can join: that is `status`. */
+  happening: boolean
 }
 
 /** The owner is whoever is signed in, so there is no userId. */

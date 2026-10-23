@@ -4,7 +4,18 @@ import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getToken } from '@clerk/react'
 import { getMe } from '../api/me'
-import { cancelWant, closeWant, createWant, listWants, reopenWant, signUp, updateWant, withdraw } from '../api/wants'
+import {
+  cancelWant,
+  closeWant,
+  createWant,
+  endWant,
+  listWants,
+  reopenWant,
+  signUp,
+  startWant,
+  updateWant,
+  withdraw,
+} from '../api/wants'
 import placeholder from '../assets/avatar-placeholder.svg'
 import MeProvider from '../hooks/MeProvider'
 import type { Category, User, Want } from '../types/wants'
@@ -20,6 +31,8 @@ vi.mock('../api/wants', () => ({
   cancelWant: vi.fn(),
   closeWant: vi.fn(),
   reopenWant: vi.fn(),
+  startWant: vi.fn(),
+  endWant: vi.fn(),
   signUp: vi.fn(),
   withdraw: vi.fn(),
 }))
@@ -47,13 +60,13 @@ const SAM: User = {
   imageUrl: 'https://img.clerk.com/sam.jpg',
 }
 
-// An active want for one with only its owner seated, unless `seats` says otherwise.
+// An active want for one, not happening, with only its owner seated, unless `seats` says otherwise.
 function want(
   id: number,
   message: string,
   category: Category = 'FOOD',
   owner = DANI,
-  seats: Partial<Pick<Want, 'capacity' | 'seatsTaken' | 'signedUp' | 'status'>> = {},
+  seats: Partial<Pick<Want, 'capacity' | 'seatsTaken' | 'signedUp' | 'status' | 'happening'>> = {},
 ): Want {
   return {
     id,
@@ -66,6 +79,7 @@ function want(
     seatsTaken: 1,
     signedUp: owner === DANI,
     status: 'ACTIVE',
+    happening: false,
     ...seats,
   }
 }
@@ -289,6 +303,128 @@ describe('Wants', () => {
 
     expect(screen.queryByRole('button', { name: 'Sign up' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Withdraw' })).not.toBeInTheDocument()
+  })
+
+  it("offers Start on your own active and closed wants, but not on other people's", async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown'),
+      want(2, 'Catan night', 'GAME', DANI, { status: 'CLOSED' }),
+      want(3, 'Dune Part Two', 'MOVIE', SAM),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Start' })).toBeEnabled()
+    expect(within(row('Catan night')).getByRole('button', { name: 'Start' })).toBeEnabled()
+    expect(within(row('Dune Part Two')).queryByRole('button', { name: 'Start' })).not.toBeInTheDocument()
+  })
+
+  it('starts a want and reloads the list', async () => {
+    vi.mocked(startWant).mockResolvedValue(want(1, 'Ramen downtown', 'FOOD', DANI, { happening: true }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Start' }))
+
+    expect(startWant).toHaveBeenCalledWith(1)
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it('shows Happening now on a happening want', async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { happening: true }),
+      want(2, 'Dune Part Two', 'MOVIE', SAM),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(within(row('Ramen downtown')).getByText('Happening now')).toBeInTheDocument()
+    expect(within(row('Dune Part Two')).queryByText('Happening now')).not.toBeInTheDocument()
+  })
+
+  it('offers End instead of Start on your happening wants', async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { happening: true }),
+      want(2, 'Catan night', 'GAME', DANI, { status: 'CLOSED', happening: true }),
+      want(3, 'Dune Part Two', 'MOVIE', SAM, { happening: true }),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    for (const mine of ['Ramen downtown', 'Catan night']) {
+      expect(within(row(mine)).getByRole('button', { name: 'End' })).toBeEnabled()
+      expect(within(row(mine)).queryByRole('button', { name: 'Start' })).not.toBeInTheDocument()
+    }
+    expect(within(row('Dune Part Two')).queryByRole('button', { name: 'End' })).not.toBeInTheDocument()
+  })
+
+  it('asks before ending, and ends nothing if you say no', async () => {
+    // Ending is final, like cancelling: an ended want can't be started again.
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { happening: true })])
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'End' }))
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Ramen downtown'))
+    expect(endWant).not.toHaveBeenCalled()
+  })
+
+  it('ends a want and reloads the list', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { happening: true })])
+    vi.mocked(endWant).mockResolvedValue(want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'ENDED' }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'End' }))
+
+    expect(endWant).toHaveBeenCalledWith(1)
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it('still offers Sign up to others, and Edit to you, on an active want that is happening', async () => {
+    // Happening says it is live, not that the lineup is fixed: Close does that.
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { happening: true }),
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4, happening: true }),
+      want(3, 'Catan night', 'GAME', SAM, { capacity: 4, seatsTaken: 2, signedUp: true, happening: true }),
+    ])
+    renderWants()
+    await screen.findByText('Catan night')
+
+    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' })).toBeEnabled()
+    expect(within(row('Dune Part Two')).getByRole('button', { name: 'Sign up' })).toBeEnabled()
+    expect(within(row('Catan night')).getByRole('button', { name: 'Withdraw' })).toBeEnabled()
+  })
+
+  it('shows Ended on an ended want', async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'ENDED' }),
+      want(2, 'Dune Part Two', 'MOVIE', SAM),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(within(row('Ramen downtown')).getByText('Ended')).toBeInTheDocument()
+    expect(within(row('Dune Part Two')).queryByText('Ended')).not.toBeInTheDocument()
+  })
+
+  it("offers no buttons on an ended want, yours or anyone else's", async () => {
+    // Every change to an ended want is a 409, for the owner and everyone else.
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'ENDED' }),
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4, status: 'ENDED' }),
+      want(3, 'Catan night', 'GAME', SAM, { capacity: 4, seatsTaken: 2, signedUp: true, status: 'ENDED' }),
+    ])
+    renderWants()
+    await screen.findByText('Catan night')
+
+    for (const ended of ['Ramen downtown', 'Dune Part Two', 'Catan night']) {
+      expect(within(row(ended)).queryByRole('button')).not.toBeInTheDocument()
+      expect(within(row(ended)).queryByLabelText('Change category')).not.toBeInTheDocument()
+    }
   })
 
   it("offers edit controls only on the signed-in user's own wants", async () => {
