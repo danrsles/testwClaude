@@ -52,9 +52,7 @@ export function useNotifications(): UseNotifications {
     // once; the refetch afterwards brings the server's version either way.
     onMutate: async (upTo: number) => {
       await queryClient.cancelQueries({ queryKey: key })
-      queryClient.setQueryData<Notification[]>(key, (all) =>
-        all?.map((n) => (n.id <= upTo ? { ...n, read: true } : n)),
-      )
+      queryClient.setQueryData<Notification[]>(key, (all) => all?.map((n) => (n.id <= upTo ? { ...n, read: true } : n)))
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   })

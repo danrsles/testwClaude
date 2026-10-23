@@ -78,9 +78,7 @@ export default function People() {
         // The alert above already says why the list is empty.
         !error && (
           <p className="py-9 text-center text-stone-500 dark:text-stone-400">
-            {searching
-              ? `No one matches “${shownFor}”.`
-              : "You don't follow anyone yet. Search for someone above."}
+            {searching ? `No one matches “${shownFor}”.` : "You don't follow anyone yet. Search for someone above."}
           </p>
         )
       ) : (
