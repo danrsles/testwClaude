@@ -307,7 +307,7 @@ class WantLifecycleIT {
 
         assertThatThrownBy(() -> wantService.close(pizza, dani)).isInstanceOf(WantCancelledException.class);
         assertThatThrownBy(() -> wantService.reopen(pizza, dani)).isInstanceOf(WantCancelledException.class);
-        assertThatThrownBy(() -> wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, dani))
+        assertThatThrownBy(() -> wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, dani))
                 .isInstanceOf(WantCancelledException.class);
     }
 
@@ -319,10 +319,10 @@ class WantLifecycleIT {
         ClerkIdentity alex = member("alex", dani, pizza);
         wantService.close(pizza, dani);
 
-        assertThatThrownBy(() -> wantService.update(pizza, "Pizza Saturday", Category.FOOD, 6, dani))
+        assertThatThrownBy(() -> wantService.update(pizza, "Pizza Saturday", Category.FOOD, 6, null, dani))
                 .isInstanceOf(WantClosedException.class);
         wantService.reopen(pizza, dani);
-        WantResponse edited = wantService.update(pizza, "Pizza Saturday", Category.FOOD, 6, dani);
+        WantResponse edited = wantService.update(pizza, "Pizza Saturday", Category.FOOD, 6, null, dani);
 
         assertThat(edited.message()).isEqualTo("Pizza Saturday");
         assertThat(edited.capacity()).isEqualTo(6);

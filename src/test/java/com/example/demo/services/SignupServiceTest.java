@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 
 /**
@@ -65,6 +66,23 @@ class SignupServiceTest {
                 .isInstanceOf(OwnerCannotWithdrawException.class);
         then(wantSignupRepository).should(never()).withdraw(anyLong(), anyLong());
         then(notificationService).should(never()).notify(any(), any(), any(), any());
+    }
+
+    @Test
+    void anOpenWantIsNeverFull() {
+        User alex = withId(new User("alex", "user_alex"), 2L);
+        Want games = new Want("Board games", Category.GAME, alex, null);
+        ReflectionTestUtils.setField(games, "id", 7L);
+        given(userService.current(DANI)).willReturn(dani);
+        given(wantRepository.findByIdForUpdate(7L)).willReturn(Optional.of(games));
+        given(wantRepository.isInFeed(7L, 1L)).willReturn(true);
+        // Lenient: a fix may skip counting altogether when there is no limit.
+        lenient().when(wantSignupRepository.countByWantId(7L)).thenReturn(1_000L);
+        given(wantSignupRepository.signUpIfAbsent(7L, 1L)).willReturn(1);
+
+        signupService.signUp(7L, DANI);
+
+        then(wantSignupRepository).should().signUpIfAbsent(7L, 1L);
     }
 
     @Test

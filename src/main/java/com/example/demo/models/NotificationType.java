@@ -21,5 +21,9 @@ public enum NotificationType {
     /** The actor, the owner, started a want the recipient is signed up for: it is happening now. */
     WANT_STARTED,
     /** The actor, the owner, ended a happening want the recipient is signed up for. */
-    WANT_ENDED
+    WANT_ENDED,
+    /** The actor, the owner, removed the seat limit on a want the recipient is signed up for: bring anyone. */
+    WANT_OPEN_INVITE,
+    /** The actor, the owner, limited an open want the recipient is signed up for to the people already in. */
+    WANT_LIMITED
 }

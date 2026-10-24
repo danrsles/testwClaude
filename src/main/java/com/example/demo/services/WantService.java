@@ -71,7 +71,7 @@ public class WantService {
      * was created. Followers are not told, for now.
      */
     @Transactional
-    public WantResponse create(String message, Category category, int capacity, ClerkIdentity who) {
+    public WantResponse create(String message, Category category, Integer capacity, ClerkIdentity who) {
         User me = userService.current(who);
         Want want = wantRepository.save(new Want(message, category, me, capacity));
         wantSignupRepository.signUpIfAbsent(want.getId(), me.getId());
@@ -83,28 +83,40 @@ public class WantService {
      * Replaces the message and category, and the capacity if one is given.
      * The owner never changes. Only an active want can be edited (409): a
      * closed one is reopened first. Capacity can be raised but not lowered
-     * (400), so nobody loses a seat they hold. A new name or category tells the
-     * lineup, with the old name when it changed; a capacity raise alone, or
-     * saving with nothing changed, tells nobody.
+     * (400), so nobody loses a seat they hold. openInvite true removes the
+     * limit; false gives an open want back a limit of exactly the people
+     * already in, counted under the row lock so no signup slips past it. An
+     * open want takes no capacity (400), as any number is a lower limit. A
+     * new name or category tells the lineup, with the old name when it
+     * changed, and so do opening and limiting; a capacity raise alone, a
+     * repeat that changes nothing, or saving unchanged tells nobody.
      */
     @Transactional
     public WantResponse update(Long wantId, String message, Category category, Integer capacity,
-            ClerkIdentity who) {
+            Boolean openInvite, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
         requireNotFinal(want);
         if (want.getStatus() == WantStatus.CLOSED) {
             throw new WantClosedException(wantId);
         }
-        if (capacity != null && capacity < want.getCapacity()) {
-            throw new CapacityLoweredException(wantId, want.getCapacity(), capacity);
+        Integer limit = want.getCapacity();
+        if (capacity != null && (limit == null || capacity < limit)) {
+            throw new CapacityLoweredException(wantId, limit, capacity);
         }
         String previousMessage = want.getMessage();
         boolean renamed = !Objects.equals(previousMessage, message);
         boolean recategorised = want.getCategory() != category;
 
+        boolean opened = Boolean.TRUE.equals(openInvite) && limit != null;
+        boolean limited = Boolean.FALSE.equals(openInvite) && limit == null;
+
         want.setMessage(message);
         want.setCategory(category);
-        if (capacity != null) {
+        if (opened) {
+            want.setCapacity(null);
+        } else if (limited) {
+            want.setCapacity(Math.toIntExact(wantSignupRepository.countByWantId(wantId)));
+        } else if (capacity != null) {
             want.setCapacity(capacity);
         }
         // Flushed now, because notifyLineup copies the new message from the
@@ -114,6 +126,11 @@ public class WantService {
         if (renamed || recategorised) {
             notificationService.notifyLineup(wantId, saved.getUser(), NotificationType.WANT_UPDATED,
                     renamed ? previousMessage : null);
+        }
+        if (opened) {
+            notificationService.notifyLineup(wantId, saved.getUser(), NotificationType.WANT_OPEN_INVITE, null);
+        } else if (limited) {
+            notificationService.notifyLineup(wantId, saved.getUser(), NotificationType.WANT_LIMITED, null);
         }
         return withSeats(saved, saved.getUser());
     }

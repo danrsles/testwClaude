@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
+import com.example.demo.models.NotificationType;
 import com.example.demo.models.User;
 import com.example.demo.models.Want;
 import com.example.demo.models.WantStatus;
@@ -75,7 +76,7 @@ class WantServiceTest {
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
         given(wantRepository.saveAndFlush(want)).willReturn(want);
 
-        WantResponse updated = wantService.update(1L, "Pho", Category.FOOD, null, DANI);
+        WantResponse updated = wantService.update(1L, "Pho", Category.FOOD, null, null, DANI);
 
         assertThat(updated.message()).isEqualTo("Pho");
         assertThat(updated.userId()).isEqualTo(1L);
@@ -85,7 +86,7 @@ class WantServiceTest {
     void othersMayNotUpdateIt() {
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, dani)));
 
-        assertThatThrownBy(() -> wantService.update(1L, "Mine now", Category.FOOD, null, MALLORY))
+        assertThatThrownBy(() -> wantService.update(1L, "Mine now", Category.FOOD, null, null, MALLORY))
                 .isInstanceOf(WantForbiddenException.class);
         then(wantRepository).should(never()).saveAndFlush(any());
     }
@@ -95,9 +96,83 @@ class WantServiceTest {
         // Lowering it could take a seat from someone who already has one.
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Pizza", Category.FOOD, dani, 3)));
 
-        assertThatThrownBy(() -> wantService.update(1L, "Pizza", Category.FOOD, 2, DANI))
+        assertThatThrownBy(() -> wantService.update(1L, "Pizza", Category.FOOD, 2, null, DANI))
                 .isInstanceOf(CapacityLoweredException.class);
         then(wantRepository).should(never()).saveAndFlush(any());
+    }
+
+    @Test
+    void openingAWantRemovesItsLimit() {
+        Want want = new Want("Pizza", Category.FOOD, dani, 2);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+
+        WantResponse opened = wantService.update(1L, "Pizza", Category.FOOD, null, true, DANI);
+
+        assertThat(want.getCapacity()).isNull();
+        assertThat(opened.capacity()).isNull();
+    }
+
+    @Test
+    void openingAWantTellsTheLineup() {
+        // So they know they can bring others.
+        Want want = new Want("Pizza", Category.FOOD, dani, 2);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+
+        wantService.update(1L, "Pizza", Category.FOOD, null, true, DANI);
+
+        then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_OPEN_INVITE, null);
+    }
+
+    @Test
+    void anOpenWantCannotBeGivenALimit() {
+        // Any limit is lower than none, and could leave more people in than seats.
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Pizza", Category.FOOD, dani, null)));
+
+        assertThatThrownBy(() -> wantService.update(1L, "Pizza", Category.FOOD, 5, null, DANI))
+                .isInstanceOf(CapacityLoweredException.class);
+        then(wantRepository).should(never()).saveAndFlush(any());
+    }
+
+    @Test
+    void limitingAnOpenWantCapsItAtItsLineup() {
+        // Exactly the people already in, so nobody loses a seat and nobody new gets one.
+        Want want = new Want("Pizza", Category.FOOD, dani, null);
+        ReflectionTestUtils.setField(want, "id", 1L);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+        given(wantSignupRepository.countByWantId(1L)).willReturn(4L);
+
+        WantResponse limited = wantService.update(1L, "Pizza", Category.FOOD, null, false, DANI);
+
+        assertThat(want.getCapacity()).isEqualTo(4);
+        assertThat(limited.capacity()).isEqualTo(4);
+    }
+
+    @Test
+    void limitingAnOpenWantTellsTheLineup() {
+        Want want = new Want("Pizza", Category.FOOD, dani, null);
+        ReflectionTestUtils.setField(want, "id", 1L);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+        given(wantSignupRepository.countByWantId(1L)).willReturn(4L);
+
+        wantService.update(1L, "Pizza", Category.FOOD, null, false, DANI);
+
+        then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_LIMITED, null);
+    }
+
+    @Test
+    void limitingALimitedWantChangesNothing() {
+        Want want = new Want("Pizza", Category.FOOD, dani, 3);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+
+        wantService.update(1L, "Pizza", Category.FOOD, null, false, DANI);
+
+        assertThat(want.getCapacity()).isEqualTo(3);
+        then(notificationService).shouldHaveNoInteractions();
     }
 
     @Test

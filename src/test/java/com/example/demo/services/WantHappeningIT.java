@@ -170,7 +170,7 @@ class WantHappeningIT {
         ClerkIdentity alex = member("alex", dani, pizza);
         wantService.start(pizza, dani);
 
-        WantResponse renamed = wantService.update(pizza, "Pizza at Luigi's", Category.FOOD, null, dani);
+        WantResponse renamed = wantService.update(pizza, "Pizza at Luigi's", Category.FOOD, null, null, dani);
 
         assertThat(renamed.message()).isEqualTo("Pizza at Luigi's");
         assertThat(renamed.happening()).isTrue();
@@ -253,7 +253,7 @@ class WantHappeningIT {
         wantService.start(pizza, dani);
         wantService.end(pizza, dani);
 
-        assertThatThrownBy(() -> wantService.update(pizza, "Pizza again", Category.FOOD, null, dani))
+        assertThatThrownBy(() -> wantService.update(pizza, "Pizza again", Category.FOOD, null, null, dani))
                 .isInstanceOf(WantEndedException.class);
         assertThatThrownBy(() -> wantService.close(pizza, dani)).isInstanceOf(WantEndedException.class);
         assertThatThrownBy(() -> wantService.reopen(pizza, dani)).isInstanceOf(WantEndedException.class);

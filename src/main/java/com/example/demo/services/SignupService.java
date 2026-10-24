@@ -59,7 +59,8 @@ public class SignupService {
             throw new WantNotFoundException(wantId);
         }
         // A separate statement after the lock, so it sees every committed signup.
-        if (wantSignupRepository.countByWantId(wantId) >= want.getCapacity()) {
+        // An open invite has no limit, so it is never full and needs no count.
+        if (want.getCapacity() != null && wantSignupRepository.countByWantId(wantId) >= want.getCapacity()) {
             throw new WantFullException(wantId);
         }
         if (wantSignupRepository.signUpIfAbsent(wantId, me.getId()) == 1) {
