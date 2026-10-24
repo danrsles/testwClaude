@@ -27,6 +27,7 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -213,6 +214,76 @@ class WantControllerTest {
     }
 
     @Test
+    void createsAnOpenInviteWant() throws Exception {
+        // No capacity reaches the service: an open invite has no seat limit.
+        given(wantService.create(eq("Board games"), eq(Category.GAME), isNull(), eq(DANI)))
+                .willReturn(seated(new Want("Board games", Category.GAME, dani, null)));
+
+        mockMvc.perform(post("/wants").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Board games\",\"category\":\"GAME\",\"openInvite\":true}"))
+                .andExpect(status().isCreated());
+
+        then(wantService).should().create("Board games", Category.GAME, null, DANI);
+    }
+
+    @Test
+    void openInviteWithACapacityIsRejected() throws Exception {
+        // true contradicts a limit of 4; false sets the limit to the lineup, so a number would be ignored.
+        mockMvc.perform(post("/wants").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Board games\",\"category\":\"GAME\",\"capacity\":4,\"openInvite\":true}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(put("/wants/1").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Board games\",\"category\":\"GAME\",\"capacity\":6,\"openInvite\":false}"))
+                .andExpect(status().isBadRequest());
+
+        then(wantService).should(never()).create(any(), any(), any(), any());
+        then(wantService).should(never()).update(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void editingCanOpenAWant() throws Exception {
+        given(wantService.update(eq(1L), eq("Board games"), eq(Category.GAME), isNull(), eq(true), eq(DANI)))
+                .willReturn(seated(new Want("Board games", Category.GAME, dani, null)));
+
+        mockMvc.perform(put("/wants/1").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Board games\",\"category\":\"GAME\",\"openInvite\":true}"))
+                .andExpect(status().isOk());
+
+        then(wantService).should().update(1L, "Board games", Category.GAME, null, true, DANI);
+    }
+
+    @Test
+    void editingCanLimitAnOpenWant() throws Exception {
+        // false, not left out: left out keeps an open want open.
+        given(wantService.update(eq(1L), eq("Board games"), eq(Category.GAME), isNull(), eq(false), eq(DANI)))
+                .willReturn(seated(new Want("Board games", Category.GAME, dani, 1)));
+
+        mockMvc.perform(put("/wants/1").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Board games\",\"category\":\"GAME\",\"openInvite\":false}"))
+                .andExpect(status().isOk());
+
+        then(wantService).should().update(1L, "Board games", Category.GAME, null, false, DANI);
+    }
+
+    @Test
+    void anOpenInviteHasNoCapacity() throws Exception {
+        given(wantService.findAll(DANI)).willReturn(List.of(
+                seated(new Want("Board games", Category.GAME, dani, null)),
+                seated(new Want("Pizza Friday", Category.FOOD, dani, 4))));
+
+        // The key is there with null, rather than left out, so the client can tell "no limit" from a missing field.
+        mockMvc.perform(get("/wants").with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].capacity").value(nullValue()))
+                .andExpect(jsonPath("$[1].capacity").value(4));
+    }
+
+    @Test
     void rejectsWantWithBlankMessage() throws Exception {
         mockMvc.perform(post("/wants").with(signedInAsDani())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -222,7 +293,7 @@ class WantControllerTest {
 
     @Test
     void updatesWant() throws Exception {
-        given(wantService.update(eq(1L), eq("Ramen somewhere else"), eq(Category.FOOD), isNull(), eq(DANI)))
+        given(wantService.update(eq(1L), eq("Ramen somewhere else"), eq(Category.FOOD), isNull(), isNull(), eq(DANI)))
                 .willReturn(seated(new Want("Ramen somewhere else", Category.FOOD, dani)));
 
         mockMvc.perform(put("/wants/1").with(signedInAsDani())
@@ -234,7 +305,7 @@ class WantControllerTest {
 
     @Test
     void updatingSomeoneElsesWantIsForbidden() throws Exception {
-        given(wantService.update(eq(2L), any(), any(), any(), eq(DANI))).willThrow(new WantForbiddenException(2L));
+        given(wantService.update(eq(2L), any(), any(), any(), any(), eq(DANI))).willThrow(new WantForbiddenException(2L));
 
         mockMvc.perform(put("/wants/2").with(signedInAsDani())
                         .contentType(MediaType.APPLICATION_JSON)

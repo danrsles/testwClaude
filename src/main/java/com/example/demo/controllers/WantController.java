@@ -53,7 +53,7 @@ public class WantController {
     public WantResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
             @Valid @RequestBody WantRequest request) {
         return wantService.update(id, request.message(), request.category(), request.capacity(),
-                Identities.of(jwt));
+                request.openInvite(), Identities.of(jwt));
     }
 
     @PostMapping("/{id}/close")

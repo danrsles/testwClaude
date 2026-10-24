@@ -32,9 +32,12 @@ public class Want {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    /** How many people the want takes, its owner included. Can be raised, never lowered. */
-    @Column(nullable = false)
-    private int capacity = 1;
+    /**
+     * How many people the want takes, its owner included; null for an open
+     * invite, which takes everyone who can see it. Can be raised, or removed,
+     * but never lowered, and an open invite never gets one.
+     */
+    private Integer capacity = 1;
 
     /** When the owner fixed the lineup; null while it is open. Reopening clears it. */
     @Column(name = "closed_at")
@@ -61,7 +64,7 @@ public class Want {
         this.user = user;
     }
 
-    public Want(String message, Category category, User user, int capacity) {
+    public Want(String message, Category category, User user, Integer capacity) {
         this(message, category, user);
         this.capacity = capacity;
     }
@@ -94,11 +97,11 @@ public class Want {
         this.user = user;
     }
 
-    public int getCapacity() {
+    public Integer getCapacity() {
         return capacity;
     }
 
-    public void setCapacity(int capacity) {
+    public void setCapacity(Integer capacity) {
         this.capacity = capacity;
     }
 
