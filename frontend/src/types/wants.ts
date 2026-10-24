@@ -6,8 +6,8 @@ export type Category = (typeof CATEGORIES)[number]
  * Whether people can join. Only an ACTIVE want takes signups, withdrawals and
  * edits. CLOSED has a fixed lineup until the owner reopens it; ENDED is final
  * but stays in the feed; CANCELLED is final and never in the feed. Full is
- * not a status: it is seatsTaken >= capacity. Whether it is live is a
- * separate flag, `happening`.
+ * not a status: it is seatsTaken >= capacity, and an open invite is never
+ * full. Whether it is live is a separate flag, `happening`.
  */
 export type WantStatus = 'ACTIVE' | 'CLOSED' | 'ENDED' | 'CANCELLED'
 
@@ -40,9 +40,9 @@ export interface Want {
   username: string
   /** The owner's Clerk profile picture; null for owners Clerk has told us nothing about, such as the seeded dani. */
   imageUrl: string | null
-  /** How many people the want is for, the owner included; at least 1. */
-  capacity: number
-  /** Seats taken, counting the owner. Full when seatsTaken >= capacity. */
+  /** How many people the want is for, the owner included; at least 1. Null for an open invite, which has no limit. */
+  capacity: number | null
+  /** Seats taken, counting the owner. Full when seatsTaken >= capacity; an open invite never is. */
   seatsTaken: number
   /** Whether you hold a seat; always true on your own wants. */
   signedUp: boolean
@@ -57,13 +57,20 @@ export interface WantRequest {
   category: Category
   /** At least 1. Defaults to 1 on create; left out on update, it stays as it was. It can't be lowered. */
   capacity?: number
+  /**
+   * True removes the limit, on create or on a limited want. False on an open
+   * want limits it to exactly the people already signed up; on a limited want
+   * it changes nothing. Never sent together with capacity: that is a 400.
+   */
+  openInvite?: boolean
 }
 
 /** What signing up or withdrawing returns: the want's seats after the change. */
 export interface SignupEventDetails {
   wantId: number
   message: string
-  capacity: number
+  /** Null for an open invite. */
+  capacity: number | null
   seatsTaken: number
   /** Usernames only, the owner included. */
   lineup: string[]

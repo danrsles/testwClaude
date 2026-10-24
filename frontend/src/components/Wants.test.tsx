@@ -608,6 +608,130 @@ describe('Wants', () => {
     expect(screen.getByRole('button', { name: 'Withdraw' })).toBeEnabled()
   })
 
+  it('creates an open invite, sending openInvite and no capacity', async () => {
+    vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos', 'FOOD', DANI, { capacity: null }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+    await userEvent.click(screen.getByLabelText('Open invite'))
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD', openInvite: true })
+  })
+
+  it('disables the capacity field while Open invite is ticked, and enables it again when unticked', async () => {
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    const openInvite = screen.getByLabelText('Open invite')
+    await userEvent.click(openInvite)
+    expect(screen.getByLabelText('Capacity')).toBeDisabled()
+
+    await userEvent.click(openInvite)
+    expect(screen.getByLabelText('Capacity')).toBeEnabled()
+  })
+
+  it('shows how many are going instead of seats on an open want', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: null, seatsTaken: 3 })])
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    expect(within(row('Ramen downtown')).getByText('3 going')).toBeInTheDocument()
+    expect(within(row('Ramen downtown')).queryByText(/seats/)).not.toBeInTheDocument()
+  })
+
+  it('never shows Full or disables Sign up on an open want', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: null, seatsTaken: 40 })])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    expect(screen.getByRole('button', { name: 'Sign up' })).toBeEnabled()
+    expect(within(row('Dune Part Two')).queryByText('Full')).not.toBeInTheDocument()
+  })
+
+  it('shows Open invite ticked and the capacity field disabled when editing an open want', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: null, seatsTaken: 3 })])
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+
+    expect(screen.getByLabelText('Edit open invite')).toBeChecked()
+    expect(screen.getByLabelText('Edit capacity')).toBeDisabled()
+  })
+
+  it('opens a limited want, sending openInvite: true and no capacity', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 4, seatsTaken: 2 })])
+    vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: null, seatsTaken: 2 }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    expect(screen.getByLabelText('Edit open invite')).not.toBeChecked()
+    await userEvent.click(screen.getByLabelText('Edit open invite'))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'FOOD', openInvite: true })
+  })
+
+  it('limits an open want to the people already in, sending openInvite: false and no capacity', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: null, seatsTaken: 3 })])
+    vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 3, seatsTaken: 3 }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    await userEvent.click(screen.getByLabelText('Edit open invite'))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'FOOD', openInvite: false })
+  })
+
+  it('keeps the capacity field disabled after unticking Open invite on an open want', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: null, seatsTaken: 3 })])
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    await userEvent.click(screen.getByLabelText('Edit open invite'))
+
+    // The API sets the limit to the lineup size; a bigger one takes a second save.
+    const capacity = screen.getByLabelText('Edit capacity')
+    expect(capacity).toBeDisabled()
+    expect(capacity).toHaveValue(3)
+  })
+
+  it('saves an edited message on an open want without openInvite or capacity', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: null, seatsTaken: 3 })])
+    vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen uptown', 'FOOD', DANI, { capacity: null, seatsTaken: 3 }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    const editor = screen.getByLabelText('Edit want')
+    await userEvent.clear(editor)
+    await userEvent.type(editor, 'Ramen uptown')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen uptown', category: 'FOOD' })
+  })
+
+  it('sends no openInvite after ticking and unticking Open invite on a limited want', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 4, seatsTaken: 2 })])
+    vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 4, seatsTaken: 2 }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    const openInvite = screen.getByLabelText('Edit open invite')
+    await userEvent.click(openInvite)
+    await userEvent.click(openInvite)
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'FOOD' })
+  })
+
   it('shows why signing up failed', async () => {
     // Someone took the last seat after the list loaded: the API answers 409.
     vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 2 })])
