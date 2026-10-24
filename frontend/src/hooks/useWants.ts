@@ -13,6 +13,9 @@ import {
 } from '../api/wants'
 import type { Category, Want } from '../types/wants'
 
+/** What an edit changes about the seats: a raised limit, or opening or limiting it. Never both, which the API refuses. */
+export type SeatsChange = { capacity: number } | { openInvite: boolean }
+
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : 'Request failed'
 }
@@ -23,9 +26,10 @@ export interface UseWants {
   error: string | null
   refresh: () => Promise<void>
   /** Each mutation resolves true on success, false if the API rejected it. */
-  add: (message: string, category: Category, capacity: number) => Promise<boolean>
-  /** Leaving capacity out keeps it as it is. */
-  update: (id: number, message: string, category: Category, capacity?: number) => Promise<boolean>
+  /** A null capacity makes it an open invite, with no limit. */
+  add: (message: string, category: Category, capacity: number | null) => Promise<boolean>
+  /** Leaving the change out keeps the seats as they are. */
+  update: (id: number, message: string, category: Category, change?: SeatsChange) => Promise<boolean>
   close: (id: number) => Promise<boolean>
   reopen: (id: number) => Promise<boolean>
   start: (id: number) => Promise<boolean>
@@ -94,14 +98,16 @@ export function useWants(filter: Category | ''): UseWants {
   )
 
   const add = useCallback(
-    (message: string, category: Category, capacity: number) =>
-      mutate(() => createWant({ message, category, capacity })),
+    (message: string, category: Category, capacity: number | null) =>
+      mutate(() =>
+        createWant(capacity === null ? { message, category, openInvite: true } : { message, category, capacity }),
+      ),
     [mutate],
   )
 
   const update = useCallback(
-    (id: number, message: string, category: Category, capacity?: number) =>
-      mutate(() => updateWant(id, capacity === undefined ? { message, category } : { message, category, capacity })),
+    (id: number, message: string, category: Category, change?: SeatsChange) =>
+      mutate(() => updateWant(id, { message, category, ...change })),
     [mutate],
   )
 

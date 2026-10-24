@@ -4,6 +4,7 @@ import type { SubmitEvent } from 'react'
 import { useMe } from '../hooks/useMe'
 import { useOnPictureChange } from '../hooks/useOnPictureChange'
 import { useWants } from '../hooks/useWants'
+import type { SeatsChange } from '../hooks/useWants'
 import { CATEGORIES } from '../types/wants'
 import type { Category, Want } from '../types/wants'
 import Avatar from './Avatar'
@@ -19,6 +20,11 @@ const TAG: Record<Category, string> = {
 function seats(text: string, min: number): number | null {
   const n = Number(text)
   return Number.isInteger(n) && n >= min ? n : null
+}
+
+/** An open invite has no limit, so it is never full. */
+function isFull(want: Want): boolean {
+  return want.capacity !== null && want.seatsTaken >= want.capacity
 }
 
 /**
@@ -44,31 +50,42 @@ export default function Wants() {
   const [category, setCategory] = useState<Category>('FOOD')
   // Kept as typed, so the field can be cleared on the way to a new number.
   const [capacity, setCapacity] = useState('1')
+  const [openInvite, setOpenInvite] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [draft, setDraft] = useState('')
   const [draftCapacity, setDraftCapacity] = useState('')
+  const [draftOpen, setDraftOpen] = useState(false)
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     const text = message.trim()
-    const count = seats(capacity, 1)
-    if (!text || count === null) return
+    const count = openInvite ? null : seats(capacity, 1)
+    if (!text || (!openInvite && count === null)) return
     // Only clear the inputs if the API accepted them, so a failure keeps them.
     if (await add(text, category, count)) {
       setMessage('')
       setCapacity('1')
+      setOpenInvite(false)
     }
   }
 
   async function saveEdit(want: Want) {
     const text = draft.trim()
-    // The API refuses to lower the capacity, so the field goes no lower either.
-    const count = seats(draftCapacity, want.capacity)
-    if (!text || count === null) return
-    // Send the capacity only when it changed; left out, it stays as it is.
-    const raised = count === want.capacity ? undefined : count
+    if (!text) return
+    let change: SeatsChange | undefined
+    if (draftOpen !== (want.capacity === null)) {
+      // Opening, or limiting to the people already in. Never with a capacity:
+      // a bigger limit takes a second save.
+      change = { openInvite: draftOpen }
+    } else if (want.capacity !== null) {
+      // The API refuses to lower the capacity, so the field goes no lower either.
+      const count = seats(draftCapacity, want.capacity)
+      if (count === null) return
+      // Send the capacity only when it changed; left out, it stays as it is.
+      if (count !== want.capacity) change = { capacity: count }
+    }
     // Leave the row open on failure so the edit is not silently lost.
-    if (await update(want.id, text, want.category, raised)) setEditingId(null)
+    if (await update(want.id, text, want.category, change)) setEditingId(null)
   }
 
   // Unlike closing, which Reopen undoes, cancelling is final and tells the
@@ -101,7 +118,7 @@ export default function Wants() {
           onChange={(e) => setMessage(e.target.value)}
           placeholder="What do you want?"
           aria-label="Want description"
-          className="field min-w-0 flex-1 px-3 py-2"
+          className="field min-w-0 flex-1 basis-full px-3 py-2 sm:basis-0"
         />
         <select
           value={category}
@@ -119,14 +136,19 @@ export default function Wants() {
           type="number"
           min={1}
           value={capacity}
+          disabled={openInvite}
           onChange={(e) => setCapacity(e.target.value)}
           aria-label="Capacity"
           title="How many people, you included"
-          className="field w-20 px-3 py-2"
+          className="field w-20 px-3 py-2 disabled:opacity-50"
         />
+        <label className="flex items-center gap-1.5 text-sm" title="No limit on how many can join">
+          <input type="checkbox" checked={openInvite} onChange={(e) => setOpenInvite(e.target.checked)} />
+          Open invite
+        </label>
         <button
           type="submit"
-          disabled={!message.trim() || seats(capacity, 1) === null}
+          disabled={!message.trim() || (!openInvite && seats(capacity, 1) === null)}
           className="btn-primary px-5 py-2"
         >
           Add
@@ -183,7 +205,7 @@ export default function Wants() {
 
               {editingId === want.id ? (
                 <span
-                  className="flex flex-1 basis-40 gap-1.5"
+                  className="flex min-w-0 flex-1 basis-40 flex-wrap gap-1.5"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') saveEdit(want)
                     if (e.key === 'Escape') setEditingId(null)
@@ -194,16 +216,28 @@ export default function Wants() {
                     autoFocus
                     onChange={(e) => setDraft(e.target.value)}
                     aria-label="Edit want"
-                    className="field min-w-0 flex-1 px-2 py-1"
+                    className="field min-w-0 flex-1 basis-full px-2 py-1 sm:basis-0"
                   />
+                  {/* Disabled on an open want even once unticked: limiting it
+                      takes exactly the lineup, shown here, and a bigger limit a second save. */}
                   <input
                     type="number"
-                    min={want.capacity}
+                    min={want.capacity ?? undefined}
                     value={draftCapacity}
+                    disabled={draftOpen || want.capacity === null}
                     onChange={(e) => setDraftCapacity(e.target.value)}
                     aria-label="Edit capacity"
-                    className="field w-16 px-2 py-1"
+                    className="field w-16 px-2 py-1 disabled:opacity-50"
                   />
+                  <label className="flex items-center gap-1 text-sm whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={draftOpen}
+                      onChange={(e) => setDraftOpen(e.target.checked)}
+                      aria-label="Edit open invite"
+                    />
+                    Open invite
+                  </label>
                 </span>
               ) : (
                 <span className="flex-1 basis-40">{want.message}</span>
@@ -216,7 +250,7 @@ export default function Wants() {
               </span>
 
               <span className="text-sm text-stone-500 tabular-nums dark:text-stone-400">
-                {want.seatsTaken} / {want.capacity} seats
+                {want.capacity === null ? `${want.seatsTaken} going` : `${want.seatsTaken} / ${want.capacity} seats`}
               </span>
 
               {/* Wraps rather than spilling out of the card on narrow phones. */}
@@ -268,7 +302,8 @@ export default function Wants() {
                           onClick={() => {
                             setEditingId(want.id)
                             setDraft(want.message)
-                            setDraftCapacity(String(want.capacity))
+                            setDraftCapacity(String(want.capacity ?? want.seatsTaken))
+                            setDraftOpen(want.capacity === null)
                           }}
                           className="btn px-2.5 py-1.5 text-sm"
                         >
@@ -302,12 +337,12 @@ export default function Wants() {
                   </button>
                 ) : (
                   <>
-                    {want.seatsTaken >= want.capacity && (
+                    {isFull(want) && (
                       <span className="self-center text-sm font-medium text-stone-500 dark:text-stone-400">Full</span>
                     )}
                     <button
                       onClick={() => signUp(want.id)}
-                      disabled={want.seatsTaken >= want.capacity}
+                      disabled={isFull(want)}
                       className="btn-primary px-2.5 py-1.5 text-sm"
                     >
                       Sign up

@@ -93,10 +93,14 @@ Which user the app acts as comes from the token, so no component passes a user i
 
 `Wants.tsx` shows edit controls only on rows where `want.userId` matches `me.id`, but that is cosmetic: the API returns 403 regardless. It names each owner by `want.username`, beside `<Avatar src={want.imageUrl} alt="" size={24} />`. The alt is empty because the username already names the person.
 
-**Signups in the UI.** Each row shows `seatsTaken / capacity seats`. Other people's rows get **Sign up**, or **Withdraw** when `want.signedUp`; full (`seatsTaken >= capacity`) disables Sign up and shows "Full". Your own rows get neither, as you always hold a seat.
+**Signups in the UI.** Each row shows `seatsTaken / capacity seats`, or `seatsTaken going` for an open invite (`capacity` null). Other people's rows get **Sign up**, or **Withdraw** when `want.signedUp`; full (`isFull`: `seatsTaken >= capacity`, never for an open invite) disables Sign up and shows "Full". Your own rows get neither, as you always hold a seat.
 - `useWants` exposes `signUp` and `withdraw` through the same `mutate` as the rest, so both reload the list and a 409 (someone took the last seat) lands in the error alert. The feed, not the `SignupEventDetails` they return, is what the screen shows.
 - The capacity fields hold the typed text, so they can be cleared on the way to a new number; `seats()` turns it into a whole number or null, and null disables Add or Save.
 - Editing offers capacity with `min={want.capacity}`, since the API refuses to lower it, and `saveEdit` sends `capacity` only when it changed. Left out, the API keeps it.
+- **Open invite** is a checkbox beside capacity on Add and in Edit; ticked, it disables the capacity field. Add sends `openInvite: true` and no capacity (`add` with a null capacity).
+  - Edit starts it ticked for an open want. `saveEdit` sends `openInvite` only when the box ends up different from where it started: `true` opens, `false` limits an open want to the people already in. It never sends `capacity` with it, which the API refuses, so `useWants`' `SeatsChange` is either one or the other.
+  - On an open want the capacity field stays disabled even unticked, showing `seatsTaken`, the limit it will get; a bigger one takes a second edit. Saving an open want unchanged sends neither, since a bare capacity is a 400.
+  - Anyone who can see the want may join, as before; only the lineup hears of opening or limiting (`WANT_OPEN_INVITE`, `WANT_LIMITED`).
 - `Notifications.tsx`'s `describe()` needs a case for every `NotificationType`, or that type's rows show a name and nothing else. `who()` says "You" for `WANT_CREATED`, whose actor is you.
 
 **Close, reopen, start, end and cancel in the UI.** `want.status` (can people join?) and `want.happening` (is it live?) drive each row; cancelled wants never reach the feed, so only `ACTIVE`, `CLOSED` and `ENDED` are drawn.
@@ -145,7 +149,7 @@ State is local `useState`. All server data is refetched after each mutation, whi
 
 ## Architecture
 
-**Planned, partly built:** the design for notifications and for signups on wants with a capacity is in `docs/design/wants-signups-and-notifications.md`. Steps 1 (notifications for follows), 2 (capacity and signups, with their screen) and 3 (close, reopen and cancel, with their buttons) are built and described below, and so is step 4's start and end, with their buttons. Step 5's open invite is built in the API, with its screen next; expiry is not. Everything below describes the code as it is; move facts here as each step lands.
+**Planned, partly built:** the design for notifications and for signups on wants with a capacity is in `docs/design/wants-signups-and-notifications.md`. Steps 1 (notifications for follows), 2 (capacity and signups, with their screen) and 3 (close, reopen and cancel, with their buttons) are built and described below, and so is step 4's start and end, with their buttons. Step 5's open invite is built too, with its screen; expiry is not. Everything below describes the code as it is; move facts here as each step lands.
 
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
 

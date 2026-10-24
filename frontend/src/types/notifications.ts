@@ -10,6 +10,8 @@ export type NotificationType =
   | 'WANT_CANCELLED'
   | 'WANT_STARTED'
   | 'WANT_ENDED'
+  | 'WANT_OPEN_INVITE'
+  | 'WANT_LIMITED'
 
 /** Someone who did something you are told about: public fields only. */
 export interface Actor {

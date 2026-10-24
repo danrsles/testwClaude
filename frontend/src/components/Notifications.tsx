@@ -48,6 +48,10 @@ function describe(n: Notification): string {
       return `started ${want}`
     case 'WANT_ENDED':
       return `ended ${want}`
+    case 'WANT_OPEN_INVITE':
+      return `opened ${want} to everyone: bring who you like`
+    case 'WANT_LIMITED':
+      return `limited ${want} to the people already in`
   }
 }
 
