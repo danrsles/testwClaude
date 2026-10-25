@@ -49,6 +49,8 @@ export interface Want {
   status: WantStatus
   /** Started by the owner and not yet ended. Says nothing about who can join: that is `status`. */
   happening: boolean
+  /** The deadline, ISO 8601 in UTC; null for none. Once it has passed, status is already CLOSED. */
+  expiresAt: string | null
 }
 
 /** The owner is whoever is signed in, so there is no userId. */
@@ -63,6 +65,10 @@ export interface WantRequest {
    * it changes nothing. Never sent together with capacity: that is a 400.
    */
   openInvite?: boolean
+  /** Must be in the future (400). Left out on update, the deadline stays as it was. */
+  expiresAt?: string
+  /** True removes the deadline. Never sent together with expiresAt: that is a 400. */
+  noDeadline?: boolean
 }
 
 /** What signing up or withdrawing returns: the want's seats after the change. */
