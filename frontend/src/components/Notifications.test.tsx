@@ -275,6 +275,24 @@ describe('Notifications', () => {
     expect(await screen.findByRole('listitem')).toHaveTextContent("sam limited 'Pizza Friday' to the people already in")
   })
 
+  it('describes WANT_DEADLINE_CHANGED as "Dani changed the deadline of \'Pizza Friday\'"', async () => {
+    // The notification doesn't carry the new time, and the same words cover a removed deadline.
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_DEADLINE_CHANGED', 'dani')])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("dani changed the deadline of 'Pizza Friday'")
+  })
+
+  it('describes WANT_EXPIRED as "\'Pizza Friday\' closed at its deadline", with no actor', async () => {
+    // Nobody closed it, the clock did; the API names the owner as actor, which the words leave out.
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_EXPIRED', 'dani')])
+    renderAt('/notifications')
+
+    const item = await screen.findByRole('listitem')
+    expect(item).toHaveTextContent(/^'Pizza Friday' closed at its deadline/)
+    expect(item).not.toHaveTextContent('dani')
+  })
+
   it('goes to the page from the bell', async () => {
     vi.mocked(listNotifications).mockResolvedValue([followedBy(1, 'alex')])
     renderAt('/')

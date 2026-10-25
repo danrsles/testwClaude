@@ -1,13 +1,16 @@
-﻿import { useId, useRef, useState } from 'react'
+﻿import { useId, useReducer, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { SubmitEvent } from 'react'
 import { useMe } from '../hooks/useMe'
 import { useOnPictureChange } from '../hooks/useOnPictureChange'
 import { useWants } from '../hooks/useWants'
-import type { SeatsChange } from '../hooks/useWants'
+import type { DeadlineChange, SeatsChange } from '../hooks/useWants'
 import { CATEGORIES } from '../types/wants'
 import type { Category, Want } from '../types/wants'
 import Avatar from './Avatar'
+import DeadlinePicker from './DeadlinePicker'
+import { NO_DEADLINE, deadlineOf, draftOf, sameDraft } from './deadline'
+import type { DeadlineDraft } from './deadline'
 
 const TAG: Record<Category, string> = {
   FOOD: 'bg-food',
@@ -25,6 +28,26 @@ function seats(text: string, min: number): number | null {
 /** An open invite has no limit, so it is never full. */
 function isFull(want: Want): boolean {
   return want.capacity !== null && want.seatsTaken >= want.capacity
+}
+
+/** Closed by its deadline rather than by hand: the API says CLOSED, and the deadline is behind us. */
+function closedAtDeadline(want: Want): boolean {
+  return want.status === 'CLOSED' && want.expiresAt !== null && new Date(want.expiresAt).getTime() <= Date.now()
+}
+
+const closesAt = new Intl.DateTimeFormat(undefined, {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+  hour: 'numeric',
+  minute: '2-digit',
+})
+
+/** What Reopen does without a new deadline: keeps one still ahead, or leaves none. */
+function keepLabel(want: Want): string {
+  return want.expiresAt !== null && new Date(want.expiresAt).getTime() > Date.now()
+    ? `Keep ${closesAt.format(new Date(want.expiresAt))}`
+    : 'No deadline'
 }
 
 /**
@@ -51,36 +74,73 @@ export default function Wants() {
   // Kept as typed, so the field can be cleared on the way to a new number.
   const [capacity, setCapacity] = useState('1')
   const [openInvite, setOpenInvite] = useState(false)
+  const [deadline, setDeadline] = useState<DeadlineDraft>(NO_DEADLINE)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [draft, setDraft] = useState('')
   const [draftCapacity, setDraftCapacity] = useState('')
   const [draftOpen, setDraftOpen] = useState(false)
+  const [draftDeadline, setDraftDeadline] = useState<DeadlineDraft>(NO_DEADLINE)
+  // Reopen asks for an optional new deadline first, in place of the row's buttons.
+  const [reopeningId, setReopeningId] = useState<number | null>(null)
+  const [reopenDeadline, setReopenDeadline] = useState<DeadlineDraft>(NO_DEADLINE)
   // Leaving edit mode unmounts the field that had focus, so the row's Edit
   // button takes it back when it mounts again.
   const refocusId = useRef<number | null>(null)
   const openInviteHint = useId()
+  // Nothing re-renders as the clock passes a deadline, so a pick can go stale
+  // with its button still enabled. A refused submit re-renders, and the picker
+  // then says why.
+  const [, recheck] = useReducer((n: number) => n + 1, 0)
+
+  // The row's Edit or Reopen button, whichever mounts, takes focus back.
+  const refocus = (id: number) => (button: HTMLButtonElement | null) => {
+    if (button && refocusId.current === id) {
+      refocusId.current = null
+      button.focus()
+    }
+  }
+
+  // A want that closed while its row was open, such as at its deadline, can't
+  // be edited, so its row leaves edit mode once the reload says so.
+  const isEditing = (want: Want) => editingId === want.id && want.status !== 'CLOSED' && want.status !== 'ENDED'
 
   function stopEditing(id: number) {
     refocusId.current = id
     setEditingId(null)
   }
 
+  function stopReopening(id: number) {
+    refocusId.current = id
+    setReopeningId(null)
+  }
+
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     const text = message.trim()
     const count = openInvite ? null : seats(capacity, 1)
+    const closes = deadlineOf(deadline)
+    if (closes === 'invalid') return recheck()
     if (!text || (!openInvite && count === null)) return
     // Only clear the inputs if the API accepted them, so a failure keeps them.
-    if (await add(text, category, count)) {
+    if (await add(text, category, count, closes?.toISOString())) {
       setMessage('')
       setCapacity('1')
       setOpenInvite(false)
+      setDeadline(NO_DEADLINE)
     }
   }
 
   async function saveEdit(want: Want) {
     const text = draft.trim()
     if (!text) return
+    // Compared as fields, not moments, so seconds the picker can't show don't
+    // count as a change, and an untouched deadline is never sent.
+    let deadlineChange: DeadlineChange | undefined
+    if (!sameDraft(draftDeadline, draftOf(want.expiresAt))) {
+      const closes = deadlineOf(draftDeadline)
+      if (closes === 'invalid') return recheck()
+      deadlineChange = closes === null ? { noDeadline: true } : { expiresAt: closes.toISOString() }
+    }
     let change: SeatsChange | undefined
     if (draftOpen !== (want.capacity === null)) {
       // Opening, or limiting to the people already in. Never with a capacity:
@@ -93,8 +153,17 @@ export default function Wants() {
       // Send the capacity only when it changed; left out, it stays as it is.
       if (count !== want.capacity) change = { capacity: count }
     }
-    // Leave the row open on failure so the edit is not silently lost.
-    if (await update(want.id, text, want.category, change)) stopEditing(want.id)
+    // Set first: if the save is refused because the want closed, the reload
+    // ends edit mode and Reopen, mounting, takes focus. If it is still open,
+    // the row stays open so the edit is not silently lost.
+    refocusId.current = want.id
+    if (await update(want.id, text, want.category, change, deadlineChange)) stopEditing(want.id)
+  }
+
+  async function confirmReopen(want: Want) {
+    const closes = deadlineOf(reopenDeadline)
+    if (closes === 'invalid') return recheck()
+    if (await reopen(want.id, closes?.toISOString())) stopReopening(want.id)
   }
 
   // Unlike closing, which Reopen undoes, cancelling is final and tells the
@@ -127,7 +196,7 @@ export default function Wants() {
           onChange={(e) => setMessage(e.target.value)}
           placeholder="What do you want?"
           aria-label="Want description"
-          className="field min-w-0 flex-1 basis-full px-3 py-2 sm:basis-0"
+          className="field min-w-0 flex-1 basis-full px-3 py-2 sm:basis-48"
         />
         <select
           value={category}
@@ -166,9 +235,12 @@ export default function Wants() {
           />
           Open invite
         </label>
+        <DeadlinePicker label="Deadline" value={deadline} onChange={setDeadline} />
         <button
           type="submit"
-          disabled={!message.trim() || (!openInvite && seats(capacity, 1) === null)}
+          disabled={
+            !message.trim() || (!openInvite && seats(capacity, 1) === null) || deadlineOf(deadline) === 'invalid'
+          }
           className="btn-primary px-5 py-2"
         >
           Add
@@ -224,7 +296,7 @@ export default function Wants() {
                 {want.category}
               </span>
 
-              {editingId === want.id ? (
+              {isEditing(want) ? (
                 <span
                   className="flex min-w-0 flex-1 basis-40 flex-wrap gap-1.5"
                   onKeyDown={(e) => {
@@ -237,7 +309,7 @@ export default function Wants() {
                     autoFocus
                     onChange={(e) => setDraft(e.target.value)}
                     aria-label="Edit want"
-                    className="field min-w-0 flex-1 basis-full px-2 py-1 sm:basis-0"
+                    className="field min-w-0 flex-1 basis-full px-2 py-1 sm:basis-40"
                   />
                   {/* Disabled on an open want even once unticked: limiting it
                       takes exactly the lineup, shown here, and a bigger limit a second save. */}
@@ -260,6 +332,7 @@ export default function Wants() {
                     />
                     Open invite
                   </label>
+                  <DeadlinePicker label="Edit deadline" value={draftDeadline} onChange={setDraftDeadline} />
                 </span>
               ) : (
                 <span className="flex-1 basis-40">{want.message}</span>
@@ -274,6 +347,13 @@ export default function Wants() {
               <span className="text-sm text-stone-500 tabular-nums dark:text-stone-400">
                 {want.capacity === null ? `${want.seatsTaken} going` : `${want.seatsTaken} / ${want.capacity} seats`}
               </span>
+
+              {/* Only while people can join; once closed, the pill below says why. */}
+              {want.expiresAt !== null && want.status !== 'CLOSED' && want.status !== 'ENDED' && (
+                <span className="text-sm text-stone-500 dark:text-stone-400">
+                  Closes <time dateTime={want.expiresAt}>{closesAt.format(new Date(want.expiresAt))}</time>
+                </span>
+              )}
 
               {/* Wraps rather than spilling out of the card on narrow phones. */}
               <span className="ml-auto flex flex-wrap justify-end gap-1.5 whitespace-nowrap">
@@ -291,13 +371,46 @@ export default function Wants() {
                 )}
                 {(want.status === 'CLOSED' || want.status === 'ENDED') && (
                   <span className="self-center rounded-full bg-stone-200 px-2 py-0.5 text-xs font-semibold tracking-wider text-stone-700 dark:bg-stone-800 dark:text-stone-300">
-                    {want.status === 'CLOSED' ? 'Closed' : 'Ended'}
+                    {want.status === 'ENDED' ? 'Ended' : closedAtDeadline(want) ? 'Closed at its deadline' : 'Closed'}
                   </span>
                 )}
                 {/* Every change to an ended want is a 409, the owner's included. */}
-                {want.status === 'ENDED' ? null : editingId === want.id ? (
+                {want.status === 'ENDED' ? null : reopeningId === want.id ? (
+                  // Its own element, so React never reuses Confirm or Cancel as Start or Cancel want.
+                  <span
+                    className="flex flex-wrap justify-end gap-1.5"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') stopReopening(want.id)
+                    }}
+                  >
+                    {/* Reopen can keep or replace a deadline, not remove one: Edit does that once it is open. */}
+                    <DeadlinePicker
+                      label="Reopen deadline"
+                      noneLabel={keepLabel(want)}
+                      value={reopenDeadline}
+                      onChange={setReopenDeadline}
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => confirmReopen(want)}
+                      disabled={deadlineOf(reopenDeadline) === 'invalid'}
+                      className="btn-primary px-2.5 py-1.5 text-sm"
+                    >
+                      Confirm
+                    </button>
+                    <button onClick={() => stopReopening(want.id)} className="btn px-2.5 py-1.5 text-sm">
+                      Cancel
+                    </button>
+                  </span>
+                ) : isEditing(want) ? (
                   <>
-                    <button onClick={() => saveEdit(want)} className="btn px-2.5 py-1.5 text-sm">
+                    <button
+                      onClick={() => saveEdit(want)}
+                      disabled={
+                        !sameDraft(draftDeadline, draftOf(want.expiresAt)) && deadlineOf(draftDeadline) === 'invalid'
+                      }
+                      className="btn px-2.5 py-1.5 text-sm"
+                    >
                       Save
                     </button>
                     <button onClick={() => stopEditing(want.id)} className="btn px-2.5 py-1.5 text-sm">
@@ -309,7 +422,16 @@ export default function Wants() {
                     {/* A closed want can't be edited until it is reopened. Tested
                         as CLOSED, not "not ACTIVE", so an unknown status keeps the controls. */}
                     {want.status === 'CLOSED' ? (
-                      <button onClick={() => reopen(want.id)} className="btn px-2.5 py-1.5 text-sm">
+                      <button
+                        ref={refocus(want.id)}
+                        onClick={() => {
+                          setReopeningId(want.id)
+                          setReopenDeadline(NO_DEADLINE)
+                          // A row that closed mid-edit must not come back in edit mode once reopened.
+                          setEditingId(null)
+                        }}
+                        className="btn px-2.5 py-1.5 text-sm"
+                      >
                         Reopen
                       </button>
                     ) : (
@@ -327,17 +449,13 @@ export default function Wants() {
                           ))}
                         </select>
                         <button
-                          ref={(button) => {
-                            if (button && refocusId.current === want.id) {
-                              refocusId.current = null
-                              button.focus()
-                            }
-                          }}
+                          ref={refocus(want.id)}
                           onClick={() => {
                             setEditingId(want.id)
                             setDraft(want.message)
                             setDraftCapacity(String(want.capacity ?? want.seatsTaken))
                             setDraftOpen(want.capacity === null)
+                            setDraftDeadline(draftOf(want.expiresAt))
                           }}
                           className="btn px-2.5 py-1.5 text-sm"
                         >

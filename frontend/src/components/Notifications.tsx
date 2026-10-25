@@ -19,8 +19,12 @@ function timeAgo(iso: string, now: number): string {
   return relative.format(Math.round(hours / 24), 'day')
 }
 
-/** Who did it: the actor's username, or "You" for a want you created. */
-function who(n: Notification): string {
+/**
+ * Who did it: the actor's username, "You" for a want you created, or nobody
+ * for a deadline passing, which the clock did rather than the owner.
+ */
+function who(n: Notification): string | null {
+  if (n.type === 'WANT_EXPIRED') return null
   return n.type === 'WANT_CREATED' ? 'You' : n.actor.username
 }
 
@@ -52,6 +56,11 @@ function describe(n: Notification): string {
       return `opened ${want} to everyone: bring who you like`
     case 'WANT_LIMITED':
       return `limited ${want} to the people already in`
+    case 'WANT_DEADLINE_CHANGED':
+      // The notification doesn't carry the new time, and this covers a removed deadline too.
+      return `changed the deadline of ${want}`
+    case 'WANT_EXPIRED':
+      return `${want} closed at its deadline`
   }
 }
 
@@ -102,6 +111,7 @@ export default function Notifications() {
         <ul className="flex flex-col gap-2">
           {notifications.map((n) => {
             const isNew = fresh.has(n.id)
+            const actor = who(n)
             return (
               <li
                 key={n.id}
@@ -115,7 +125,12 @@ export default function Notifications() {
                 <Avatar src={n.actor.imageUrl} alt="" size={32} />
                 <p className="min-w-0 flex-1">
                   {isNew && <span className="sr-only">New: </span>}
-                  <span className="font-medium">{who(n)}</span> {describe(n)}
+                  {actor !== null && (
+                    <>
+                      <span className="font-medium">{actor}</span>{' '}
+                    </>
+                  )}
+                  {describe(n)}
                 </p>
                 <time dateTime={n.createdAt} className="shrink-0 text-sm text-stone-500 dark:text-stone-400">
                   {timeAgo(n.createdAt, fetchedAt)}
