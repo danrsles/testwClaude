@@ -1,5 +1,6 @@
 package com.example.demo.services;
 
+import java.time.Clock;
 import java.util.List;
 
 import com.example.demo.dto.SignupEventDetails;
@@ -30,13 +31,15 @@ public class SignupService {
     private final WantSignupRepository wantSignupRepository;
     private final UserService userService;
     private final NotificationService notificationService;
+    private final Clock clock;
 
     public SignupService(WantRepository wantRepository, WantSignupRepository wantSignupRepository,
-            UserService userService, NotificationService notificationService) {
+            UserService userService, NotificationService notificationService, Clock clock) {
         this.wantRepository = wantRepository;
         this.wantSignupRepository = wantSignupRepository;
         this.userService = userService;
         this.notificationService = notificationService;
+        this.clock = clock;
     }
 
     /**
@@ -105,14 +108,15 @@ public class SignupService {
      * feed, so only its lineup can still see it.
      */
     private void requireActive(Want want, User me) {
-        if (want.getStatus() == WantStatus.ACTIVE) {
+        WantStatus status = want.getStatus(clock.instant());
+        if (status == WantStatus.ACTIVE) {
             return;
         }
         if (!wantSignupRepository.existsByWantIdAndUserId(want.getId(), me.getId())
                 && !wantRepository.isInFeed(want.getId(), me.getId())) {
             throw new WantNotFoundException(want.getId());
         }
-        throw switch (want.getStatus()) {
+        throw switch (status) {
             case CANCELLED -> new WantCancelledException(want.getId());
             case ENDED -> new WantEndedException(want.getId());
             default -> new WantClosedException(want.getId());
@@ -122,6 +126,6 @@ public class SignupService {
     private SignupEventDetails details(Want want, User me) {
         List<String> lineup = wantSignupRepository.findLineupUsernames(want.getId());
         return new SignupEventDetails(want.getId(), want.getMessage(), want.getCapacity(), lineup.size(), lineup,
-                lineup.contains(me.getUsername()), want.getStatus());
+                lineup.contains(me.getUsername()), want.getStatus(clock.instant()));
     }
 }

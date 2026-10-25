@@ -25,5 +25,12 @@ public enum NotificationType {
     /** The actor, the owner, removed the seat limit on a want the recipient is signed up for: bring anyone. */
     WANT_OPEN_INVITE,
     /** The actor, the owner, limited an open want the recipient is signed up for to the people already in. */
-    WANT_LIMITED
+    WANT_LIMITED,
+    /** The actor, the owner, set, moved or removed the deadline of a want the recipient is signed up for. */
+    WANT_DEADLINE_CHANGED,
+    /**
+     * A want the recipient is signed up for, or owns, closed at its deadline.
+     * Nobody acted, so the actor is the owner, and for the owner the recipient too.
+     */
+    WANT_EXPIRED
 }

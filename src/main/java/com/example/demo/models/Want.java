@@ -39,6 +39,14 @@ public class Want {
      */
     private Integer capacity = 1;
 
+    /**
+     * When the want stops taking people, if ever; null for no deadline. Once
+     * it passes the want counts as closed, even before WantService.expireDue
+     * has written closed_at. Reopening clears it once it has passed.
+     */
+    @Column(name = "expires_at")
+    private Instant expiresAt;
+
     /** When the owner fixed the lineup; null while it is open. Reopening clears it. */
     @Column(name = "closed_at")
     private Instant closedAt;
@@ -105,27 +113,51 @@ public class Want {
         this.capacity = capacity;
     }
 
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
+    public void setExpiresAt(Instant expiresAt) {
+        this.expiresAt = expiresAt;
+    }
+
     /**
      * Cancelled outranks ended, which outranks closed: a want closed, then
      * started and ended, is ENDED. Whether it is happening is not a status;
-     * see isHappening.
+     * see isHappening. now is passed in, from the services' Clock, so tests
+     * can pin it.
      */
-    public WantStatus getStatus() {
+    public WantStatus getStatus(Instant now) {
         if (cancelledAt != null) {
             return WantStatus.CANCELLED;
         }
         if (endedAt != null) {
             return WantStatus.ENDED;
         }
-        return closedAt != null ? WantStatus.CLOSED : WantStatus.ACTIVE;
+        return closedAt != null || isPastDeadline(now) ? WantStatus.CLOSED : WantStatus.ACTIVE;
+    }
+
+    /** At the deadline counts as past it. */
+    private boolean isPastDeadline(Instant now) {
+        return expiresAt != null && !expiresAt.isAfter(now);
     }
 
     public void close(Instant at) {
         this.closedAt = at;
     }
 
-    public void reopen() {
+    /**
+     * Opens it again. A new deadline replaces the old one. Without one, a
+     * deadline still ahead is kept and one that has passed is cleared, as
+     * keeping it would close the want again at once.
+     */
+    public void reopen(Instant newDeadline, Instant now) {
         this.closedAt = null;
+        if (newDeadline != null) {
+            this.expiresAt = newDeadline;
+        } else if (isPastDeadline(now)) {
+            this.expiresAt = null;
+        }
     }
 
     public void cancel(Instant at) {

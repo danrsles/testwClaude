@@ -1,6 +1,8 @@
 package com.example.demo.services;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 
@@ -13,10 +15,10 @@ import com.example.demo.models.WantStatus;
 import com.example.demo.repositories.WantRepository;
 import com.example.demo.repositories.WantSignupRepository;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -45,8 +47,16 @@ class WantServiceTest {
     @Mock
     private NotificationService notificationService;
 
-    @InjectMocks
+    /** "Now" for every test here, so a deadline can sit a second either side of it. */
+    private static final Instant NOW = Instant.parse("2026-10-24T12:00:00Z");
+
     private WantService wantService;
+
+    @BeforeEach
+    void setUp() {
+        wantService = new WantService(wantRepository, wantSignupRepository, userService, notificationService,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+    }
 
     private static final ClerkIdentity DANI = new ClerkIdentity("user_dani", "dani");
     private static final ClerkIdentity MALLORY = new ClerkIdentity("user_mallory", "mallory");
@@ -65,7 +75,7 @@ class WantServiceTest {
         given(userService.current(DANI)).willReturn(dani);
         given(wantRepository.save(any(Want.class))).willAnswer(call -> call.getArgument(0));
 
-        WantResponse saved = wantService.create("Tacos", Category.FOOD, 1, DANI);
+        WantResponse saved = wantService.create("Tacos", Category.FOOD, 1, null, DANI);
 
         assertThat(saved.userId()).isEqualTo(1L);
     }
@@ -76,7 +86,7 @@ class WantServiceTest {
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
         given(wantRepository.saveAndFlush(want)).willReturn(want);
 
-        WantResponse updated = wantService.update(1L, "Pho", Category.FOOD, null, null, DANI);
+        WantResponse updated = wantService.update(1L, "Pho", Category.FOOD, null, null, null, null, DANI);
 
         assertThat(updated.message()).isEqualTo("Pho");
         assertThat(updated.userId()).isEqualTo(1L);
@@ -86,7 +96,7 @@ class WantServiceTest {
     void othersMayNotUpdateIt() {
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Ramen", Category.FOOD, dani)));
 
-        assertThatThrownBy(() -> wantService.update(1L, "Mine now", Category.FOOD, null, null, MALLORY))
+        assertThatThrownBy(() -> wantService.update(1L, "Mine now", Category.FOOD, null, null, null, null, MALLORY))
                 .isInstanceOf(WantForbiddenException.class);
         then(wantRepository).should(never()).saveAndFlush(any());
     }
@@ -96,7 +106,7 @@ class WantServiceTest {
         // Lowering it could take a seat from someone who already has one.
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Pizza", Category.FOOD, dani, 3)));
 
-        assertThatThrownBy(() -> wantService.update(1L, "Pizza", Category.FOOD, 2, null, DANI))
+        assertThatThrownBy(() -> wantService.update(1L, "Pizza", Category.FOOD, 2, null, null, null, DANI))
                 .isInstanceOf(CapacityLoweredException.class);
         then(wantRepository).should(never()).saveAndFlush(any());
     }
@@ -107,7 +117,7 @@ class WantServiceTest {
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
         given(wantRepository.saveAndFlush(want)).willReturn(want);
 
-        WantResponse opened = wantService.update(1L, "Pizza", Category.FOOD, null, true, DANI);
+        WantResponse opened = wantService.update(1L, "Pizza", Category.FOOD, null, true, null, null, DANI);
 
         assertThat(want.getCapacity()).isNull();
         assertThat(opened.capacity()).isNull();
@@ -120,7 +130,7 @@ class WantServiceTest {
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
         given(wantRepository.saveAndFlush(want)).willReturn(want);
 
-        wantService.update(1L, "Pizza", Category.FOOD, null, true, DANI);
+        wantService.update(1L, "Pizza", Category.FOOD, null, true, null, null, DANI);
 
         then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_OPEN_INVITE, null);
     }
@@ -130,7 +140,7 @@ class WantServiceTest {
         // Any limit is lower than none, and could leave more people in than seats.
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(new Want("Pizza", Category.FOOD, dani, null)));
 
-        assertThatThrownBy(() -> wantService.update(1L, "Pizza", Category.FOOD, 5, null, DANI))
+        assertThatThrownBy(() -> wantService.update(1L, "Pizza", Category.FOOD, 5, null, null, null, DANI))
                 .isInstanceOf(CapacityLoweredException.class);
         then(wantRepository).should(never()).saveAndFlush(any());
     }
@@ -144,7 +154,7 @@ class WantServiceTest {
         given(wantRepository.saveAndFlush(want)).willReturn(want);
         given(wantSignupRepository.countByWantId(1L)).willReturn(4L);
 
-        WantResponse limited = wantService.update(1L, "Pizza", Category.FOOD, null, false, DANI);
+        WantResponse limited = wantService.update(1L, "Pizza", Category.FOOD, null, false, null, null, DANI);
 
         assertThat(want.getCapacity()).isEqualTo(4);
         assertThat(limited.capacity()).isEqualTo(4);
@@ -158,7 +168,7 @@ class WantServiceTest {
         given(wantRepository.saveAndFlush(want)).willReturn(want);
         given(wantSignupRepository.countByWantId(1L)).willReturn(4L);
 
-        wantService.update(1L, "Pizza", Category.FOOD, null, false, DANI);
+        wantService.update(1L, "Pizza", Category.FOOD, null, false, null, null, DANI);
 
         then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_LIMITED, null);
     }
@@ -169,7 +179,7 @@ class WantServiceTest {
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
         given(wantRepository.saveAndFlush(want)).willReturn(want);
 
-        wantService.update(1L, "Pizza", Category.FOOD, null, false, DANI);
+        wantService.update(1L, "Pizza", Category.FOOD, null, false, null, null, DANI);
 
         assertThat(want.getCapacity()).isEqualTo(3);
         then(notificationService).shouldHaveNoInteractions();
@@ -181,12 +191,12 @@ class WantServiceTest {
         given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
 
         assertThatThrownBy(() -> wantService.close(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
-        assertThatThrownBy(() -> wantService.reopen(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
+        assertThatThrownBy(() -> wantService.reopen(1L, null, MALLORY)).isInstanceOf(WantForbiddenException.class);
         assertThatThrownBy(() -> wantService.start(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
         assertThatThrownBy(() -> wantService.end(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
         assertThatThrownBy(() -> wantService.cancel(1L, MALLORY)).isInstanceOf(WantForbiddenException.class);
 
-        assertThat(want.getStatus()).isEqualTo(WantStatus.ACTIVE);
+        assertThat(want.getStatus(NOW)).isEqualTo(WantStatus.ACTIVE);
         assertThat(want.isHappening()).isFalse();
         then(notificationService).shouldHaveNoInteractions();
         then(wantRepository).should(never()).delete(any());
@@ -197,7 +207,7 @@ class WantServiceTest {
         Want want = new Want("Ramen", Category.FOOD, dani);
 
         assertThat(want.isHappening()).isFalse();
-        assertThat(want.getStatus()).isEqualTo(WantStatus.ACTIVE);
+        assertThat(want.getStatus(NOW)).isEqualTo(WantStatus.ACTIVE);
     }
 
     @Test
@@ -208,7 +218,7 @@ class WantServiceTest {
         want.close(Instant.parse("2026-10-23T19:30:00Z"));
         want.end(Instant.parse("2026-10-23T22:00:00Z"));
 
-        assertThat(want.getStatus()).isEqualTo(WantStatus.ENDED);
+        assertThat(want.getStatus(NOW)).isEqualTo(WantStatus.ENDED);
         assertThat(want.isHappening()).isFalse();
     }
 
@@ -262,5 +272,153 @@ class WantServiceTest {
         InOrder order = inOrder(userService, wantRepository);
         order.verify(userService).current(DANI);
         order.verify(wantRepository).findFeedByCategory(1L, Category.FOOD);
+    }
+
+    /** dani's Pizza Friday, found as want 1 under the row lock. */
+    private Want editable(Instant expiresAt) {
+        Want want = new Want("Pizza Friday", Category.FOOD, dani, 4);
+        want.setExpiresAt(expiresAt);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        return want;
+    }
+
+    private void savesItself(Want want) {
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+    }
+
+    @Test
+    void editingSetsOrMovesTheDeadline() {
+        Want want = editable(null);
+        savesItself(want);
+
+        WantResponse set = wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, NOW.plusSeconds(3600),
+                null, DANI);
+        assertThat(want.getExpiresAt()).isEqualTo(NOW.plusSeconds(3600));
+        assertThat(set.expiresAt()).isEqualTo(NOW.plusSeconds(3600));
+
+        wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, NOW.plusSeconds(7200), null, DANI);
+        assertThat(want.getExpiresAt()).isEqualTo(NOW.plusSeconds(7200));
+    }
+
+    @Test
+    void anEditThatLeavesOutTheDeadlineKeepsIt() {
+        // As with capacity, leaving it out means "keep", so older clients cannot erase it.
+        Want want = editable(NOW.plusSeconds(3600));
+        savesItself(want);
+
+        wantService.update(1L, "Pizza Saturday", Category.FOOD,
+                null,   // capacity
+                null,   // openInvite
+                null,   // expiresAt: not sent, the point of this test
+                null,   // noDeadline
+                DANI);
+
+        assertThat(want.getExpiresAt()).isEqualTo(NOW.plusSeconds(3600));
+    }
+
+    @Test
+    void editingCanRemoveTheDeadline() {
+        Want want = editable(NOW.plusSeconds(3600));
+        savesItself(want);
+
+        WantResponse removed = wantService.update(1L, "Pizza Friday", Category.FOOD,
+                null,   // capacity
+                null,   // openInvite
+                null,   // expiresAt
+                true,   // noDeadline: the point of this test
+                DANI);
+
+        assertThat(want.getExpiresAt()).isNull();
+        assertThat(removed.expiresAt()).isNull();
+    }
+
+    @Test
+    void aWantPastItsDeadlineCannotBeEdited() {
+        // Past its deadline it is closed, whether or not the job has written closed_at yet.
+        editable(NOW.minusSeconds(1));
+
+        assertThatThrownBy(() -> wantService.update(1L, "Pizza Saturday", Category.FOOD, null, null,
+                NOW.plusSeconds(3600), null, DANI)).isInstanceOf(WantClosedException.class);
+        then(wantRepository).should(never()).saveAndFlush(any());
+    }
+
+    @Test
+    void changingTheDeadlineTellsTheLineup() {
+        Want want = editable(NOW.plusSeconds(3600));
+        savesItself(want);
+
+        wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, NOW.plusSeconds(7200), null, DANI);
+
+        then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_DEADLINE_CHANGED, null);
+        then(notificationService).shouldHaveNoMoreInteractions();
+    }
+
+    @Test
+    void settingAFirstDeadlineTellsTheLineup() {
+        // From none to one is a change too, though the old value is null.
+        Want want = editable(null);
+        savesItself(want);
+
+        wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, NOW.plusSeconds(3600), null, DANI);
+
+        then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_DEADLINE_CHANGED, null);
+        then(notificationService).shouldHaveNoMoreInteractions();
+    }
+
+    @Test
+    void removingTheDeadlineTellsTheLineup() {
+        Want want = editable(NOW.plusSeconds(3600));
+        savesItself(want);
+
+        wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, null, true, DANI);
+
+        then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_DEADLINE_CHANGED, null);
+        then(notificationService).shouldHaveNoMoreInteractions();
+    }
+
+    @Test
+    void sendingTheSameDeadlineTellsNobody() {
+        Want want = editable(NOW.plusSeconds(3600));
+        savesItself(want);
+
+        wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, NOW.plusSeconds(3600), null, DANI);
+
+        then(notificationService).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void reopeningClearsADeadlineThatHasPassed() {
+        // Closed by hand, then the deadline passed while it was closed: kept, it would close the want again at once.
+        Want expired = editable(NOW.minusSeconds(60));
+        expired.close(NOW.minusSeconds(120));
+
+        WantResponse reopened = wantService.reopen(1L, null, DANI);
+
+        assertThat(expired.getExpiresAt()).isNull();
+        assertThat(reopened.status()).isEqualTo(WantStatus.ACTIVE);
+    }
+
+    @Test
+    void reopeningKeepsADeadlineStillAhead() {
+        // Closed by hand for a while: reopening without a new deadline keeps the one it had.
+        Want closedEarly = editable(NOW.plusSeconds(3600));
+        closedEarly.close(NOW.minusSeconds(60));
+
+        WantResponse reopened = wantService.reopen(1L, null, DANI);
+
+        assertThat(closedEarly.getExpiresAt()).isEqualTo(NOW.plusSeconds(3600));
+        assertThat(reopened.status()).isEqualTo(WantStatus.ACTIVE);
+        assertThat(reopened.expiresAt()).isEqualTo(NOW.plusSeconds(3600));
+    }
+
+    @Test
+    void reopeningWithANewDeadlineSetsIt() {
+        Want want = editable(NOW.minusSeconds(60));
+
+        WantResponse reopened = wantService.reopen(1L, NOW.plusSeconds(86_400), DANI);
+
+        assertThat(want.getExpiresAt()).isEqualTo(NOW.plusSeconds(86_400));
+        assertThat(reopened.status()).isEqualTo(WantStatus.ACTIVE);
+        assertThat(reopened.expiresAt()).isEqualTo(NOW.plusSeconds(86_400));
     }
 }

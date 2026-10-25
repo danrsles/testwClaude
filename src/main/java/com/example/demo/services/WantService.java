@@ -1,5 +1,6 @@
 package com.example.demo.services;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -36,13 +37,15 @@ public class WantService {
     private final WantSignupRepository wantSignupRepository;
     private final UserService userService;
     private final NotificationService notificationService;
+    private final Clock clock;
 
     public WantService(WantRepository wantRepository, WantSignupRepository wantSignupRepository,
-            UserService userService, NotificationService notificationService) {
+            UserService userService, NotificationService notificationService, Clock clock) {
         this.wantRepository = wantRepository;
         this.wantSignupRepository = wantSignupRepository;
         this.userService = userService;
         this.notificationService = notificationService;
+        this.clock = clock;
     }
 
     /**
@@ -68,12 +71,17 @@ public class WantService {
 
     /**
      * Creates a want with its owner in the first seat, and tells the owner it
-     * was created. Followers are not told, for now.
+     * was created. Followers are not told, for now. expiresAt is its
+     * deadline, or null for none; the controller has already refused one in
+     * the past.
      */
     @Transactional
-    public WantResponse create(String message, Category category, Integer capacity, ClerkIdentity who) {
+    public WantResponse create(String message, Category category, Integer capacity, Instant expiresAt,
+            ClerkIdentity who) {
         User me = userService.current(who);
-        Want want = wantRepository.save(new Want(message, category, me, capacity));
+        Want created = new Want(message, category, me, capacity);
+        created.setExpiresAt(expiresAt);
+        Want want = wantRepository.save(created);
         wantSignupRepository.signUpIfAbsent(want.getId(), me.getId());
         notificationService.notify(me.getId(), me, NotificationType.WANT_CREATED, want.getId());
         return withSeats(want, me);
@@ -90,13 +98,19 @@ public class WantService {
      * new name or category tells the lineup, with the old name when it
      * changed, and so do opening and limiting; a capacity raise alone, a
      * repeat that changes nothing, or saving unchanged tells nobody.
+     *
+     * expiresAt sets or moves the deadline and noDeadline true removes it;
+     * with neither it stays as it was. A want past its deadline is closed,
+     * so it cannot be edited. A deadline that changed tells the lineup
+     * (WANT_DEADLINE_CHANGED); the same one again tells nobody.
      */
     @Transactional
     public WantResponse update(Long wantId, String message, Category category, Integer capacity,
-            Boolean openInvite, ClerkIdentity who) {
+            Boolean openInvite, Instant expiresAt, Boolean noDeadline, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
-        requireNotFinal(want);
-        if (want.getStatus() == WantStatus.CLOSED) {
+        Instant now = clock.instant();
+        requireNotFinal(want, now);
+        if (want.getStatus(now) == WantStatus.CLOSED) {
             throw new WantClosedException(wantId);
         }
         Integer limit = want.getCapacity();
@@ -110,6 +124,10 @@ public class WantService {
         boolean opened = Boolean.TRUE.equals(openInvite) && limit != null;
         boolean limited = Boolean.FALSE.equals(openInvite) && limit == null;
 
+        Instant deadline = Boolean.TRUE.equals(noDeadline) ? null
+                : expiresAt != null ? expiresAt : want.getExpiresAt();
+        boolean deadlineChanged = !Objects.equals(want.getExpiresAt(), deadline);
+
         want.setMessage(message);
         want.setCategory(category);
         if (opened) {
@@ -119,6 +137,7 @@ public class WantService {
         } else if (capacity != null) {
             want.setCapacity(capacity);
         }
+        want.setExpiresAt(deadline);
         // Flushed now, because notifyLineup copies the new message from the
         // table in SQL, not from this entity.
         Want saved = wantRepository.saveAndFlush(want);
@@ -132,6 +151,9 @@ public class WantService {
         } else if (limited) {
             notificationService.notifyLineup(wantId, saved.getUser(), NotificationType.WANT_LIMITED, null);
         }
+        if (deadlineChanged) {
+            notificationService.notifyLineup(wantId, saved.getUser(), NotificationType.WANT_DEADLINE_CHANGED, null);
+        }
         return withSeats(saved, saved.getUser());
     }
 
@@ -143,9 +165,10 @@ public class WantService {
     @Transactional
     public WantResponse close(Long wantId, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
-        requireNotFinal(want);
-        if (want.getStatus() == WantStatus.ACTIVE) {
-            want.close(Instant.now());
+        Instant now = clock.instant();
+        requireNotFinal(want, now);
+        if (want.getStatus(now) == WantStatus.ACTIVE) {
+            want.close(now);
             notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_CLOSED, null);
         }
         return withSeats(want, want.getUser());
@@ -153,15 +176,19 @@ public class WantService {
 
     /**
      * Opens a closed want to signups and edits again, and tells the lineup.
-     * Reopening an active want changes nothing and tells nobody; an ended or
-     * cancelled one is a 409.
+     * That includes one closed by its deadline. expiresAt, already checked to
+     * be in the future, replaces the deadline; without one, a deadline still
+     * ahead is kept and one that has passed is cleared. Reopening an active want
+     * changes nothing and tells nobody, deadline included: an active want's
+     * deadline is changed by update. An ended or cancelled one is a 409.
      */
     @Transactional
-    public WantResponse reopen(Long wantId, ClerkIdentity who) {
+    public WantResponse reopen(Long wantId, Instant expiresAt, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
-        requireNotFinal(want);
-        if (want.getStatus() == WantStatus.CLOSED) {
-            want.reopen();
+        Instant now = clock.instant();
+        requireNotFinal(want, now);
+        if (want.getStatus(now) == WantStatus.CLOSED) {
+            want.reopen(expiresAt, now);
             notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_REOPENED, null);
         }
         return withSeats(want, want.getUser());
@@ -177,14 +204,15 @@ public class WantService {
     @Transactional
     public void cancel(Long wantId, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
+        Instant now = clock.instant();
         // A switch expression, so a new status fails to compile until it is given a case here.
-        boolean cancels = switch (want.getStatus()) {
+        boolean cancels = switch (want.getStatus(now)) {
             case ACTIVE, CLOSED -> true;
             case CANCELLED -> false;
             case ENDED -> throw new WantEndedException(wantId);
         };
         if (cancels) {
-            want.cancel(Instant.now());
+            want.cancel(now);
             notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_CANCELLED, null);
         }
     }
@@ -198,9 +226,10 @@ public class WantService {
     @Transactional
     public WantResponse start(Long wantId, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
-        requireNotFinal(want);
+        Instant now = clock.instant();
+        requireNotFinal(want, now);
         if (!want.isHappening()) {
-            want.start(Instant.now());
+            want.start(now);
             notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_STARTED, null);
         }
         return withSeats(want, want.getUser());
@@ -214,32 +243,48 @@ public class WantService {
     @Transactional
     public WantResponse end(Long wantId, ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
-        if (want.getStatus() == WantStatus.ENDED) {
+        Instant now = clock.instant();
+        if (want.getStatus(now) == WantStatus.ENDED) {
             return withSeats(want, want.getUser());
         }
-        requireNotFinal(want);
+        requireNotFinal(want, now);
         if (!want.isHappening()) {
             throw new WantNotHappeningException(wantId);
         }
-        want.end(Instant.now());
+        want.end(now);
         notificationService.notifyLineup(wantId, want.getUser(), NotificationType.WANT_ENDED, null);
         return withSeats(want, want.getUser());
     }
 
     /** Cancelling and ending are final: nothing else may happen to the want afterwards. */
-    private static void requireNotFinal(Want want) {
-        if (want.getStatus() == WantStatus.CANCELLED) {
+    private static void requireNotFinal(Want want, Instant now) {
+        if (want.getStatus(now) == WantStatus.CANCELLED) {
             throw new WantCancelledException(want.getId());
         }
-        if (want.getStatus() == WantStatus.ENDED) {
+        if (want.getStatus(now) == WantStatus.ENDED) {
             throw new WantEndedException(want.getId());
         }
+    }
+
+    /**
+     * Writes closed_at on every want whose deadline has passed and tells
+     * each one's lineup and owner. Run every minute by WantExpiryJob.
+     * Returns how many notifications it sent.
+     *
+     * Not needed for correctness: getStatus already treats such a want as
+     * closed. It takes no row lock first, because the single UPDATE flips
+     * each want at most once, even with two runs at the same time, and waits
+     * behind any request that holds the lock (see WantRepository.expireDue).
+     */
+    @Transactional
+    public int expireDue() {
+        return wantRepository.expireDue();
     }
 
     /** One want as `me` sees it. */
     private WantResponse withSeats(Want want, User me) {
         return WantResponse.from(want, (int) wantSignupRepository.countByWantId(want.getId()),
-                wantSignupRepository.existsByWantIdAndUserId(want.getId(), me.getId()));
+                wantSignupRepository.existsByWantIdAndUserId(want.getId(), me.getId()), clock.instant());
     }
 
     /** A list of wants as `me` sees them, in two queries however long the list. */
@@ -253,8 +298,10 @@ public class WantService {
             seats.put((Long) row[0], ((Long) row[1]).intValue());
         }
         Set<Long> mine = wantSignupRepository.findSignedUpWantIds(me.getId(), ids);
+        Instant now = clock.instant();
         return wants.stream()
-                .map(want -> WantResponse.from(want, seats.getOrDefault(want.getId(), 0), mine.contains(want.getId())))
+                .map(want -> WantResponse.from(want, seats.getOrDefault(want.getId(), 0), mine.contains(want.getId()),
+                        now))
                 .toList();
     }
 

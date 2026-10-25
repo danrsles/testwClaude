@@ -2,6 +2,7 @@ package com.example.demo.controllers;
 
 import java.util.List;
 
+import com.example.demo.dto.ReopenRequest;
 import com.example.demo.dto.WantRequest;
 import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
@@ -46,14 +47,14 @@ public class WantController {
     @ResponseStatus(HttpStatus.CREATED)
     public WantResponse create(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody WantRequest request) {
         return wantService.create(request.message(), request.category(), request.capacityOnCreate(),
-                Identities.of(jwt));
+                request.expiresAt(), Identities.of(jwt));
     }
 
     @PutMapping("/{id}")
     public WantResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
             @Valid @RequestBody WantRequest request) {
         return wantService.update(id, request.message(), request.category(), request.capacity(),
-                request.openInvite(), Identities.of(jwt));
+                request.openInvite(), request.expiresAt(), request.noDeadline(), Identities.of(jwt));
     }
 
     @PostMapping("/{id}/close")
@@ -62,8 +63,9 @@ public class WantController {
     }
 
     @PostMapping("/{id}/reopen")
-    public WantResponse reopen(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
-        return wantService.reopen(id, Identities.of(jwt));
+    public WantResponse reopen(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
+            @Valid @RequestBody(required = false) ReopenRequest request) {
+        return wantService.reopen(id, request == null ? null : request.expiresAt(), Identities.of(jwt));
     }
 
     @PostMapping("/{id}/start")

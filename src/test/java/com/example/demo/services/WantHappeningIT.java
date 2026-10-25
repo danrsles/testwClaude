@@ -75,7 +75,7 @@ class WantHappeningIT {
     }
 
     private Long want(ClerkIdentity owner, String message, int capacity) {
-        return wantService.create(message, Category.FOOD, capacity, owner).id();
+        return wantService.create(message, Category.FOOD, capacity, null, owner).id();
     }
 
     private int seats(Long wantId) {
@@ -170,7 +170,8 @@ class WantHappeningIT {
         ClerkIdentity alex = member("alex", dani, pizza);
         wantService.start(pizza, dani);
 
-        WantResponse renamed = wantService.update(pizza, "Pizza at Luigi's", Category.FOOD, null, null, dani);
+        WantResponse renamed = wantService.update(pizza, "Pizza at Luigi's", Category.FOOD, null, null, null, null,
+                dani);
 
         assertThat(renamed.message()).isEqualTo("Pizza at Luigi's");
         assertThat(renamed.happening()).isTrue();
@@ -253,10 +254,10 @@ class WantHappeningIT {
         wantService.start(pizza, dani);
         wantService.end(pizza, dani);
 
-        assertThatThrownBy(() -> wantService.update(pizza, "Pizza again", Category.FOOD, null, null, dani))
+        assertThatThrownBy(() -> wantService.update(pizza, "Pizza again", Category.FOOD, null, null, null, null, dani))
                 .isInstanceOf(WantEndedException.class);
         assertThatThrownBy(() -> wantService.close(pizza, dani)).isInstanceOf(WantEndedException.class);
-        assertThatThrownBy(() -> wantService.reopen(pizza, dani)).isInstanceOf(WantEndedException.class);
+        assertThatThrownBy(() -> wantService.reopen(pizza, null, dani)).isInstanceOf(WantEndedException.class);
         assertThatThrownBy(() -> wantService.start(pizza, dani)).isInstanceOf(WantEndedException.class);
         assertThatThrownBy(() -> wantService.cancel(pizza, dani)).isInstanceOf(WantEndedException.class);
 
