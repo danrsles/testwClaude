@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+﻿import { useId, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { SubmitEvent } from 'react'
 import { useMe } from '../hooks/useMe'
@@ -55,6 +55,15 @@ export default function Wants() {
   const [draft, setDraft] = useState('')
   const [draftCapacity, setDraftCapacity] = useState('')
   const [draftOpen, setDraftOpen] = useState(false)
+  // Leaving edit mode unmounts the field that had focus, so the row's Edit
+  // button takes it back when it mounts again.
+  const refocusId = useRef<number | null>(null)
+  const openInviteHint = useId()
+
+  function stopEditing(id: number) {
+    refocusId.current = id
+    setEditingId(null)
+  }
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -85,7 +94,7 @@ export default function Wants() {
       if (count !== want.capacity) change = { capacity: count }
     }
     // Leave the row open on failure so the edit is not silently lost.
-    if (await update(want.id, text, want.category, change)) setEditingId(null)
+    if (await update(want.id, text, want.category, change)) stopEditing(want.id)
   }
 
   // Unlike closing, which Reopen undoes, cancelling is final and tells the
@@ -135,15 +144,26 @@ export default function Wants() {
         <input
           type="number"
           min={1}
-          value={capacity}
+          // Empty while open, so a greyed-out number doesn't look like a limit.
+          value={openInvite ? '' : capacity}
+          placeholder={openInvite ? 'Any' : undefined}
           disabled={openInvite}
           onChange={(e) => setCapacity(e.target.value)}
           aria-label="Capacity"
+          aria-describedby={openInvite ? openInviteHint : undefined}
           title="How many people, you included"
           className="field w-20 px-3 py-2 disabled:opacity-50"
         />
+        <span id={openInviteHint} className="sr-only">
+          No limit: anyone who can see it may join
+        </span>
         <label className="flex items-center gap-1.5 text-sm" title="No limit on how many can join">
-          <input type="checkbox" checked={openInvite} onChange={(e) => setOpenInvite(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={openInvite}
+            onChange={(e) => setOpenInvite(e.target.checked)}
+            className="accent-emerald-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:accent-emerald-500"
+          />
           Open invite
         </label>
         <button
@@ -180,7 +200,8 @@ export default function Wants() {
         </p>
       )}
 
-      {loading ? (
+      {/* Only the first load replaces the list, so a reload keeps rows, and focus, in place. */}
+      {loading && wants.length === 0 ? (
         <p className="py-9 text-center text-stone-500 dark:text-stone-400">Loading...</p>
       ) : wants.length === 0 ? (
         <p className="py-9 text-center text-stone-500 dark:text-stone-400">
@@ -208,7 +229,7 @@ export default function Wants() {
                   className="flex min-w-0 flex-1 basis-40 flex-wrap gap-1.5"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') saveEdit(want)
-                    if (e.key === 'Escape') setEditingId(null)
+                    if (e.key === 'Escape') stopEditing(want.id)
                   }}
                 >
                   <input
@@ -229,12 +250,13 @@ export default function Wants() {
                     aria-label="Edit capacity"
                     className="field w-16 px-2 py-1 disabled:opacity-50"
                   />
-                  <label className="flex items-center gap-1 text-sm whitespace-nowrap">
+                  <label className="flex items-center gap-1.5 text-sm whitespace-nowrap">
                     <input
                       type="checkbox"
                       checked={draftOpen}
                       onChange={(e) => setDraftOpen(e.target.checked)}
                       aria-label="Edit open invite"
+                      className="accent-emerald-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:accent-emerald-500"
                     />
                     Open invite
                   </label>
@@ -256,6 +278,12 @@ export default function Wants() {
               {/* Wraps rather than spilling out of the card on narrow phones. */}
               <span className="ml-auto flex flex-wrap justify-end gap-1.5 whitespace-nowrap">
                 {/* Filled and borderless like the category tag, so they read as a status, not a button. */}
+                {/* Only while people can join: on a closed or ended want there is no one left to invite. */}
+                {want.capacity === null && want.status !== 'CLOSED' && want.status !== 'ENDED' && (
+                  <span className="self-center rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold tracking-wider text-sky-800 dark:bg-sky-950 dark:text-sky-300">
+                    Open invite
+                  </span>
+                )}
                 {want.happening && (
                   <span className="self-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold tracking-wider text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                     Happening now
@@ -272,7 +300,7 @@ export default function Wants() {
                     <button onClick={() => saveEdit(want)} className="btn px-2.5 py-1.5 text-sm">
                       Save
                     </button>
-                    <button onClick={() => setEditingId(null)} className="btn px-2.5 py-1.5 text-sm">
+                    <button onClick={() => stopEditing(want.id)} className="btn px-2.5 py-1.5 text-sm">
                       Cancel
                     </button>
                   </>
@@ -299,6 +327,12 @@ export default function Wants() {
                           ))}
                         </select>
                         <button
+                          ref={(button) => {
+                            if (button && refocusId.current === want.id) {
+                              refocusId.current = null
+                              button.focus()
+                            }
+                          }}
                           onClick={() => {
                             setEditingId(want.id)
                             setDraft(want.message)

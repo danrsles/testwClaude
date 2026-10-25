@@ -767,4 +767,90 @@ describe('Wants', () => {
     expect(getToken).not.toHaveBeenCalled()
     expect(listWants).toHaveBeenCalledTimes(1)
   })
+
+  it('empties the capacity field and shows Any while Open invite is ticked on Add', async () => {
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    const capacity = screen.getByLabelText('Capacity')
+    await userEvent.click(screen.getByLabelText('Open invite'))
+    expect(capacity).toHaveValue(null)
+    expect(capacity).toHaveAttribute('placeholder', 'Any')
+
+    // Unticking brings back what was there.
+    await userEvent.click(screen.getByLabelText('Open invite'))
+    expect(capacity).toHaveValue(1)
+  })
+
+  it('explains the disabled capacity field to screen readers while Open invite is ticked', async () => {
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(screen.getByLabelText('Open invite'))
+
+    expect(screen.getByLabelText('Capacity')).toHaveAccessibleDescription('No limit: anyone who can see it may join')
+  })
+
+  it('shows an Open invite pill on an open row, and none on a limited one', async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: null, seatsTaken: 4 }),
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 3, seatsTaken: 1 }),
+    ])
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    expect(within(row('Ramen downtown')).getByText('Open invite')).toBeInTheDocument()
+    expect(within(row('Dune Part Two')).queryByText('Open invite')).not.toBeInTheDocument()
+  })
+
+  it('keeps the list on screen while it reloads after a change', async () => {
+    vi.mocked(closeWant).mockResolvedValue(want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' }))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    // The reload never answers, so whatever shows meanwhile stays on screen.
+    vi.mocked(listWants).mockReturnValue(new Promise(() => {}))
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Close' }))
+
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Ramen downtown')).toBeInTheDocument()
+    expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+  })
+
+  it('puts focus back on Edit after saving', async () => {
+    vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen uptown'))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' })).toHaveFocus())
+  })
+
+  it('puts focus back on Edit after Escape or Cancel', async () => {
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+    await userEvent.keyboard('{Escape}')
+    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' })).toHaveFocus()
+
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' })).toHaveFocus()
+  })
+
+  it('keeps focus in the edit row when saving fails', async () => {
+    vi.mocked(updateWant).mockRejectedValue(new Error('409 Conflict'))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await screen.findByRole('alert')
+    const editor = screen.getByLabelText('Edit want')
+    expect(editor.closest('li')!.contains(document.activeElement)).toBe(true)
+  })
 })
