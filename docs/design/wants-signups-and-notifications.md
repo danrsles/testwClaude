@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: steps 1 to 4 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended); steps 5 to 8 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); steps 6 to 8 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 
@@ -15,7 +15,7 @@
 | Does the owner take a seat? | Yes. Creating a want signs the owner up, so capacity counts the owner and is at least 1. The owner is told the want was created (`WANT_CREATED`, to themselves). A signup by the owner changes nothing, since they already hold the seat. |
 | Can the owner withdraw? | No. That is a cancel. |
 | Can others withdraw? | Yes, while the want is active, full or not. The seat reopens and the owner is notified. |
-| Statuses | `ACTIVE`, `CLOSED`, `ENDED`, `CANCELLED`, worked out from `cancelled_at`, `ended_at` and `closed_at`, in that order, and returned as `status`. Status says who can join. Full is not a status: it is `seatsTaken >= capacity`. |
+| Statuses | `ACTIVE`, `CLOSED`, `ENDED`, `CANCELLED`, worked out from `cancelled_at`, `ended_at` and `closed_at`, in that order, and returned as `status`. Status says who can join. Full is not a status: it is `seatsTaken >= capacity`, and an open invite is never full. |
 | Happening | Not a status: a separate `happening` flag, true from `started_at` until the want ends or is cancelled. It says the want is live, while status still says who can join, so an active want can happen and still take signups (and edits), and a closed one can happen with its lineup fixed. This replaced the first sketch of `HAPPENING` as a fourth status, which needed a later setting to stay joinable while live. |
 | Starting | The owner starts an active or closed want (`WANT_STARTED` to the lineup). Starting a happening want changes nothing. |
 | Ending | Only a happening want can end (409 otherwise); the owner ends it (`WANT_ENDED` to the lineup). Final, like cancelling, but the want stays in the feed as `ENDED`: editing, closing, reopening, starting, cancelling, signing up and withdrawing are all 409. Ending twice changes nothing. Running the same want again is a later idea (repeat a want), not a reopen. |
@@ -27,6 +27,7 @@
 | Cancelling | Replaces deleting, from active or closed. The want is hidden from the feed and the lineup is notified. Final: closing, reopening or editing it afterwards is a 409, and only its lineup can still see it. |
 | Doing one twice | Closing a closed want, reopening an active one, starting a happening one, ending an ended one or cancelling a cancelled one changes nothing and notifies nobody. |
 | Editing | While the want is active, the message and category can change. Either change notifies the lineup (`WANT_UPDATED`), keeping the old name when it was renamed. Each edit is its own notification; grouping is for the screen. Capacity can be raised but never lowered, and raising it notifies nobody. |
+| Open invite | A want with no seat limit: `capacity` is null. Who can see it and join doesn't change: the owner's followers, as for any want. `openInvite: true` creates one, or opens a limited want; `openInvite: false` limits an open want to exactly its lineup, so nobody loses a seat and it is full until the owner raises the limit in a later edit. `openInvite` with a capacity, or a capacity alone on an open want, is a 400. Opening and limiting notify the lineup, not the owner (`WANT_OPEN_INVITE`, `WANT_LIMITED`); a repeat that changes nothing notifies nobody. A flag rather than `capacity: null`, because a left-out capacity already means 1 on create and "keep" on update. |
 | Notifications per signup | One each. Twenty signups are twenty bell entries; grouping them is a display decision for later. |
 | Following twice | Notifies once. |
 | Who may withdraw | Anyone in the lineup but the owner, even after unfollowing the owner. Others get 404 if the want is not in their feed. |
@@ -35,7 +36,7 @@
 ## Model
 
 ```
-wants          + capacity     INT NOT NULL CHECK (capacity >= 1)   -- includes the owner
+wants          + capacity     INT NULL CHECK (capacity >= 1)       -- includes the owner; NULL = open invite
                + expires_at   TIMESTAMPTZ NULL                      -- NULL = no deadline
                + closed_at    TIMESTAMPTZ NULL
                + cancelled_at TIMESTAMPTZ NULL
@@ -49,7 +50,8 @@ notifications  id, recipient_id, actor_id, type, want_id NULL, want_message NULL
                previous_message NULL,                                -- the old name, for a rename
                created_at, read_at NULL                              -- NULL = unread
                type IN ('FOLLOW', 'WANT_CREATED', 'WANT_SIGNUP', 'WANT_WITHDRAWN', 'WANT_UPDATED',
-                        'WANT_CLOSED', 'WANT_REOPENED', 'WANT_CANCELLED', 'WANT_STARTED', 'WANT_ENDED')
+                        'WANT_CLOSED', 'WANT_REOPENED', 'WANT_CANCELLED', 'WANT_STARTED', 'WANT_ENDED',
+                        'WANT_OPEN_INVITE', 'WANT_LIMITED')
                INDEX (recipient_id, read_at)
 ```
 
@@ -92,6 +94,8 @@ While happening, the status keeps working as before: an active happening want ca
 | `WANT_CANCELLED` | the lineup, not the owner | the owner cancels it |
 | `WANT_STARTED` | the lineup, not the owner | the owner starts it |
 | `WANT_ENDED` | the lineup, not the owner | the owner ends it |
+| `WANT_OPEN_INVITE` | the lineup, not the owner | the owner removes the seat limit |
+| `WANT_LIMITED` | the lineup, not the owner | the owner limits an open want to the people already in |
 
 Lineup notifications are one `INSERT ... SELECT` from `want_signups`, in the same transaction as the state change, so either everyone is told or the change did not happen.
 
@@ -121,7 +125,7 @@ Lineup notifications are one `INSERT ... SELECT` from `want_signups`, in the sam
 | `POST /wants/{id}/start` | owner marks it happening; returns the want | 403 not the owner; 409 ended or cancelled |
 | `POST /wants/{id}/end` | owner ends a happening want; returns the want | 403 not the owner; 409 not happening, or cancelled |
 | `DELETE /wants/{id}` | cancels; 204 | 403 not the owner; 409 ended |
-| `PUT /wants/{id}` | edits the message and category, may raise capacity; a rename or new category notifies the lineup | 400 capacity lowered; 409 closed, ended or cancelled |
+| `PUT /wants/{id}` | edits the message and category, may raise capacity, open it (`openInvite: true`) or limit an open one to its lineup (`false`); a rename, new category, opening or limiting notifies the lineup | 400 capacity lowered, a capacity on an open want, or `capacity` with `openInvite`; 409 closed, ended or cancelled |
 
 Responses that show other people (actors, lineups) need their own records with public fields only, like `UserSummary`, never a `User`.
 
@@ -133,7 +137,7 @@ Each step is one PR and works without the ones after it.
 2. **Done. Capacity and signups:** `wants.capacity`, `want_signups`, the owner's automatic seat, signing up and withdrawing, seats in the feed, and `WANT_CREATED`, `WANT_SIGNUP`, `WANT_WITHDRAWN` and `WANT_UPDATED`.
 3. **Done. Close, reopen and cancel:** `closed_at`, `cancelled_at`, `status` in the responses, `WANT_CLOSED`, `WANT_REOPENED`, `WANT_CANCELLED`; delete becomes cancel. Reopen takes no deadline until step 6.
 4. **Done. Happening and ended:** `started_at`, `ended_at`, the `happening` flag and the `ENDED` status, `POST /wants/{id}/start` and `/end` under the same lock, `WANT_STARTED` and `WANT_ENDED`. The screen has Start and End buttons, "Happening now" and "Ended" labels, and texts for both notifications.
-5. **Open invite:** a want with no seat limit, so anyone who can see it may join.
+5. **Done. Open invite:** a nullable `capacity` (null = no limit, never full), `openInvite` in the request both ways, `WANT_OPEN_INVITE` and `WANT_LIMITED`. The screen has an Open invite checkbox on Add and Edit, "N going" on open rows, and texts for both notifications.
 6. **Deadline and expiry job:** `expires_at`, signups refused after it, and automatic closing at the deadline.
 7. **Optional: live updates over SSE**, if polling is too slow.
 8. **Later: tell followers about new wants,** organised into groups, so people hear about wants they could join without opening the feed.
