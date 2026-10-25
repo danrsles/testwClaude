@@ -1,5 +1,8 @@
 package com.example.demo.services;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 
 import com.example.demo.models.Category;
@@ -8,9 +11,9 @@ import com.example.demo.models.Want;
 import com.example.demo.repositories.WantRepository;
 import com.example.demo.repositories.WantSignupRepository;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -42,8 +45,15 @@ class SignupServiceTest {
     @Mock
     private NotificationService notificationService;
 
-    @InjectMocks
+    private static final Instant NOW = Instant.parse("2026-10-24T12:00:00Z");
+
     private SignupService signupService;
+
+    @BeforeEach
+    void setUp() {
+        signupService = new SignupService(wantRepository, wantSignupRepository, userService, notificationService,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+    }
 
     private static final ClerkIdentity DANI = new ClerkIdentity("user_dani", "dani");
 
@@ -92,6 +102,21 @@ class SignupServiceTest {
 
         assertThatThrownBy(() -> signupService.signUp(99L, DANI))
                 .isInstanceOf(WantNotFoundException.class);
+        then(wantSignupRepository).should(never()).signUpIfAbsent(anyLong(), anyLong());
+    }
+
+    @Test
+    void noSignupAfterTheDeadlineEvenBeforeTheJobRuns() {
+        // closed_at is still null: the job has not run, but the deadline alone closes it.
+        User alex = withId(new User("alex", "user_alex"), 2L);
+        Want pizza = new Want("Pizza Friday", Category.FOOD, alex, 4);
+        ReflectionTestUtils.setField(pizza, "id", 7L);
+        pizza.setExpiresAt(NOW.minusSeconds(1));
+        given(userService.current(DANI)).willReturn(dani);
+        given(wantRepository.findByIdForUpdate(7L)).willReturn(Optional.of(pizza));
+        given(wantRepository.isInFeed(7L, 1L)).willReturn(true);
+
+        assertThatThrownBy(() -> signupService.signUp(7L, DANI)).isInstanceOf(WantClosedException.class);
         then(wantSignupRepository).should(never()).signUpIfAbsent(anyLong(), anyLong());
     }
 }

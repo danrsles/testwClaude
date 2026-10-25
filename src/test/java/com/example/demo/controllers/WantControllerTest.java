@@ -23,8 +23,12 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultMatcher;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
@@ -55,6 +59,8 @@ class WantControllerTest {
     // What the controller should hand the service for signedInAsDani(): the
     // token's subject plus its custom username claim.
     private static final ClerkIdentity DANI = new ClerkIdentity(DANI_ID, "dani");
+    // When the service built each response below, for whether a deadline has passed.
+    private static final Instant NOW = Instant.parse("2026-10-24T12:00:00Z");
 
     @Autowired
     private MockMvc mockMvc;
@@ -78,7 +84,7 @@ class WantControllerTest {
 
     /** A want as the service returns it: just its owner seated, and dani is that owner. */
     private static WantResponse seated(Want want) {
-        return WantResponse.from(want, 1, true);
+        return WantResponse.from(want, 1, true, NOW);
     }
 
     private static RequestPostProcessor signedInAsDani() {
@@ -141,7 +147,7 @@ class WantControllerTest {
 
     @Test
     void createsWantForTheSignedInUser() throws Exception {
-        given(wantService.create(eq("Finish Elden Ring"), eq(Category.GAME), eq(1), eq(DANI)))
+        given(wantService.create(eq("Finish Elden Ring"), eq(Category.GAME), eq(1), isNull(), eq(DANI)))
                 .willReturn(seated(new Want("Finish Elden Ring", Category.GAME, dani)));
 
         mockMvc.perform(post("/wants").with(signedInAsDani())
@@ -154,7 +160,7 @@ class WantControllerTest {
 
     @Test
     void ignoresAUserIdInTheBody() throws Exception {
-        given(wantService.create(eq("Tacos"), eq(Category.FOOD), eq(1), eq(DANI)))
+        given(wantService.create(eq("Tacos"), eq(Category.FOOD), eq(1), isNull(), eq(DANI)))
                 .willReturn(seated(new Want("Tacos", Category.FOOD, dani)));
 
         // An old client, or a forged request, naming another user: the token wins.
@@ -163,7 +169,7 @@ class WantControllerTest {
                         .content("{\"message\":\"Tacos\",\"category\":\"FOOD\",\"userId\":2}"))
                 .andExpect(status().isCreated());
 
-        then(wantService).should().create("Tacos", Category.FOOD, 1, DANI);
+        then(wantService).should().create("Tacos", Category.FOOD, 1, null, DANI);
     }
 
     @Test
@@ -173,13 +179,13 @@ class WantControllerTest {
                         .content("{\"message\":\"Tacos\",\"category\":\"FOOD\"}"))
                 .andExpect(status().isUnauthorized());
 
-        then(wantService).should(never()).create(any(), any(), anyInt(), any());
+        then(wantService).should(never()).create(any(), any(), anyInt(), any(), any());
     }
 
     @Test
     void creatingWithoutCapacityDefaultsToOne() throws Exception {
         // Clients from before signups send no capacity: the want takes just its owner.
-        given(wantService.create(eq("Tacos"), eq(Category.FOOD), eq(1), eq(DANI)))
+        given(wantService.create(eq("Tacos"), eq(Category.FOOD), eq(1), isNull(), eq(DANI)))
                 .willReturn(seated(new Want("Tacos", Category.FOOD, dani)));
 
         mockMvc.perform(post("/wants").with(signedInAsDani())
@@ -187,12 +193,12 @@ class WantControllerTest {
                         .content("{\"message\":\"Tacos\",\"category\":\"FOOD\"}"))
                 .andExpect(status().isCreated());
 
-        then(wantService).should().create("Tacos", Category.FOOD, 1, DANI);
+        then(wantService).should().create("Tacos", Category.FOOD, 1, null, DANI);
     }
 
     @Test
     void createsWantWithACapacity() throws Exception {
-        given(wantService.create(eq("Pizza Friday"), eq(Category.FOOD), eq(4), eq(DANI)))
+        given(wantService.create(eq("Pizza Friday"), eq(Category.FOOD), eq(4), isNull(), eq(DANI)))
                 .willReturn(seated(new Want("Pizza Friday", Category.FOOD, dani, 4)));
 
         mockMvc.perform(post("/wants").with(signedInAsDani())
@@ -210,13 +216,13 @@ class WantControllerTest {
                         .content("{\"message\":\"Tacos\",\"category\":\"FOOD\",\"capacity\":0}"))
                 .andExpect(status().isBadRequest());
 
-        then(wantService).should(never()).create(any(), any(), anyInt(), any());
+        then(wantService).should(never()).create(any(), any(), anyInt(), any(), any());
     }
 
     @Test
     void createsAnOpenInviteWant() throws Exception {
         // No capacity reaches the service: an open invite has no seat limit.
-        given(wantService.create(eq("Board games"), eq(Category.GAME), isNull(), eq(DANI)))
+        given(wantService.create(eq("Board games"), eq(Category.GAME), isNull(), isNull(), eq(DANI)))
                 .willReturn(seated(new Want("Board games", Category.GAME, dani, null)));
 
         mockMvc.perform(post("/wants").with(signedInAsDani())
@@ -224,7 +230,7 @@ class WantControllerTest {
                         .content("{\"message\":\"Board games\",\"category\":\"GAME\",\"openInvite\":true}"))
                 .andExpect(status().isCreated());
 
-        then(wantService).should().create("Board games", Category.GAME, null, DANI);
+        then(wantService).should().create("Board games", Category.GAME, null, null, DANI);
     }
 
     @Test
@@ -239,13 +245,14 @@ class WantControllerTest {
                         .content("{\"message\":\"Board games\",\"category\":\"GAME\",\"capacity\":6,\"openInvite\":false}"))
                 .andExpect(status().isBadRequest());
 
-        then(wantService).should(never()).create(any(), any(), any(), any());
-        then(wantService).should(never()).update(any(), any(), any(), any(), any(), any());
+        then(wantService).should(never()).create(any(), any(), any(), any(), any());
+        then(wantService).should(never()).update(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
     void editingCanOpenAWant() throws Exception {
-        given(wantService.update(eq(1L), eq("Board games"), eq(Category.GAME), isNull(), eq(true), eq(DANI)))
+        given(wantService.update(eq(1L), eq("Board games"), eq(Category.GAME), isNull(), eq(true), isNull(), isNull(),
+                eq(DANI)))
                 .willReturn(seated(new Want("Board games", Category.GAME, dani, null)));
 
         mockMvc.perform(put("/wants/1").with(signedInAsDani())
@@ -253,13 +260,14 @@ class WantControllerTest {
                         .content("{\"message\":\"Board games\",\"category\":\"GAME\",\"openInvite\":true}"))
                 .andExpect(status().isOk());
 
-        then(wantService).should().update(1L, "Board games", Category.GAME, null, true, DANI);
+        then(wantService).should().update(1L, "Board games", Category.GAME, null, true, null, null, DANI);
     }
 
     @Test
     void editingCanLimitAnOpenWant() throws Exception {
         // false, not left out: left out keeps an open want open.
-        given(wantService.update(eq(1L), eq("Board games"), eq(Category.GAME), isNull(), eq(false), eq(DANI)))
+        given(wantService.update(eq(1L), eq("Board games"), eq(Category.GAME), isNull(), eq(false), isNull(), isNull(),
+                eq(DANI)))
                 .willReturn(seated(new Want("Board games", Category.GAME, dani, 1)));
 
         mockMvc.perform(put("/wants/1").with(signedInAsDani())
@@ -267,7 +275,7 @@ class WantControllerTest {
                         .content("{\"message\":\"Board games\",\"category\":\"GAME\",\"openInvite\":false}"))
                 .andExpect(status().isOk());
 
-        then(wantService).should().update(1L, "Board games", Category.GAME, null, false, DANI);
+        then(wantService).should().update(1L, "Board games", Category.GAME, null, false, null, null, DANI);
     }
 
     @Test
@@ -293,7 +301,8 @@ class WantControllerTest {
 
     @Test
     void updatesWant() throws Exception {
-        given(wantService.update(eq(1L), eq("Ramen somewhere else"), eq(Category.FOOD), isNull(), isNull(), eq(DANI)))
+        given(wantService.update(eq(1L), eq("Ramen somewhere else"), eq(Category.FOOD), isNull(), isNull(), isNull(),
+                isNull(), eq(DANI)))
                 .willReturn(seated(new Want("Ramen somewhere else", Category.FOOD, dani)));
 
         mockMvc.perform(put("/wants/1").with(signedInAsDani())
@@ -305,7 +314,8 @@ class WantControllerTest {
 
     @Test
     void updatingSomeoneElsesWantIsForbidden() throws Exception {
-        given(wantService.update(eq(2L), any(), any(), any(), any(), eq(DANI))).willThrow(new WantForbiddenException(2L));
+        given(wantService.update(eq(2L), any(), any(), any(), any(), any(), any(), eq(DANI)))
+                .willThrow(new WantForbiddenException(2L));
 
         mockMvc.perform(put("/wants/2").with(signedInAsDani())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -339,7 +349,7 @@ class WantControllerTest {
         Want closed = new Want("Pizza Friday", Category.FOOD, dani, 4);
         closed.close(Instant.parse("2026-10-22T18:00:00Z"));
         given(wantService.close(1L, DANI)).willReturn(seated(closed));
-        given(wantService.reopen(1L, DANI)).willReturn(seated(new Want("Pizza Friday", Category.FOOD, dani, 4)));
+        given(wantService.reopen(1L, null, DANI)).willReturn(seated(new Want("Pizza Friday", Category.FOOD, dani, 4)));
 
         mockMvc.perform(post("/wants/1/close").with(signedInAsDani()))
                 .andExpect(status().isOk())
@@ -356,7 +366,7 @@ class WantControllerTest {
         mockMvc.perform(post("/wants/1/reopen")).andExpect(status().isUnauthorized());
 
         then(wantService).should(never()).close(any(), any());
-        then(wantService).should(never()).reopen(any(), any());
+        then(wantService).should(never()).reopen(any(), any(), any());
     }
 
     @Test
@@ -416,5 +426,117 @@ class WantControllerTest {
 
         mockMvc.perform(delete("/wants/2").with(signedInAsDani()))
                 .andExpect(status().isForbidden());
+    }
+
+    // Deadlines go on the wire as ISO-8601 instants, which Jackson writes and reads as is.
+    private static final Instant FUTURE = Instant.parse("2099-01-01T18:00:00Z");
+
+    /**
+     * The request was refused by validation, for this field alone, so a 400
+     * from some other mistake in the body cannot pass for it. A check on a
+     * method such as isDeadlineOrNoDeadline is named after it without "is".
+     */
+    private static ResultMatcher refusedFor(String field) {
+        return result -> assertThat(result.getResolvedException())
+                .isInstanceOfSatisfying(MethodArgumentNotValidException.class, e -> assertThat(
+                        e.getBindingResult().getFieldErrors()).extracting(FieldError::getField).containsExactly(field));
+    }
+
+    @Test
+    void createsAWantWithADeadline() throws Exception {
+        Want pizza = new Want("Pizza Friday", Category.FOOD, dani, 4);
+        pizza.setExpiresAt(FUTURE);
+        given(wantService.create(eq("Pizza Friday"), eq(Category.FOOD), eq(4), eq(FUTURE), eq(DANI)))
+                .willReturn(seated(pizza));
+
+        mockMvc.perform(post("/wants").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"message":"Pizza Friday","category":"FOOD","capacity":4,
+                                 "expiresAt":"2099-01-01T18:00:00Z"}"""))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.expiresAt").value("2099-01-01T18:00:00Z"));
+
+        then(wantService).should().create("Pizza Friday", Category.FOOD, 4, FUTURE, DANI);
+    }
+
+    @Test
+    void aDeadlineInThePastIsRefused() throws Exception {
+        String past = """
+                {"message":"Pizza Friday","category":"FOOD","expiresAt":"2020-01-01T18:00:00Z"}""";
+
+        mockMvc.perform(post("/wants").with(signedInAsDani()).contentType(MediaType.APPLICATION_JSON).content(past))
+                .andExpect(status().isBadRequest())
+                .andExpect(refusedFor("expiresAt"));
+        mockMvc.perform(put("/wants/1").with(signedInAsDani()).contentType(MediaType.APPLICATION_JSON).content(past))
+                .andExpect(status().isBadRequest())
+                .andExpect(refusedFor("expiresAt"));
+
+        then(wantService).should(never()).create(any(), any(), any(), any(), any());
+        then(wantService).should(never()).update(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aDeadlineWithNoDeadlineIsRefused() throws Exception {
+        // One sets a deadline, the other removes it, so together they contradict each other.
+        mockMvc.perform(put("/wants/1").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"message":"Pizza Friday","category":"FOOD",
+                                 "expiresAt":"2099-01-01T18:00:00Z","noDeadline":true}"""))
+                .andExpect(status().isBadRequest())
+                .andExpect(refusedFor("deadlineOrNoDeadline"));
+
+        then(wantService).should(never()).update(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void editingPassesTheDeadlineAndNoDeadline() throws Exception {
+        given(wantService.update(any(), any(), any(), any(), any(), any(), any(), any()))
+                .willReturn(seated(new Want("Pizza Friday", Category.FOOD, dani, 4)));
+
+        mockMvc.perform(put("/wants/1").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"message":"Pizza Friday","category":"FOOD","expiresAt":"2099-01-01T18:00:00Z"}"""))
+                .andExpect(status().isOk());
+        mockMvc.perform(put("/wants/1").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"message":"Pizza Friday","category":"FOOD","noDeadline":true}"""))
+                .andExpect(status().isOk());
+
+        then(wantService).should().update(1L, "Pizza Friday", Category.FOOD, null, null, FUTURE, null, DANI);
+        then(wantService).should().update(1L, "Pizza Friday", Category.FOOD, null, null, null, true, DANI);
+    }
+
+    @Test
+    void reopenPassesAnOptionalNewDeadline() throws Exception {
+        given(wantService.reopen(any(), any(), any()))
+                .willReturn(seated(new Want("Pizza Friday", Category.FOOD, dani, 4)));
+
+        mockMvc.perform(post("/wants/1/reopen").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"expiresAt":"2099-01-01T18:00:00Z"}"""))
+                .andExpect(status().isOk());
+        // No body at all, as the screen sends today.
+        mockMvc.perform(post("/wants/2/reopen").with(signedInAsDani()))
+                .andExpect(status().isOk());
+
+        then(wantService).should().reopen(1L, FUTURE, DANI);
+        then(wantService).should().reopen(2L, null, DANI);
+    }
+
+    @Test
+    void reopeningWithAPastDeadlineIsRefused() throws Exception {
+        mockMvc.perform(post("/wants/1/reopen").with(signedInAsDani())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"expiresAt":"2020-01-01T18:00:00Z"}"""))
+                .andExpect(status().isBadRequest())
+                .andExpect(refusedFor("expiresAt"));
+
+        then(wantService).should(never()).reopen(any(), any(), any());
     }
 }

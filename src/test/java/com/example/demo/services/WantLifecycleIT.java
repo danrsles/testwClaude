@@ -74,7 +74,7 @@ class WantLifecycleIT {
     }
 
     private Long want(ClerkIdentity owner, String message, int capacity) {
-        return wantService.create(message, Category.FOOD, capacity, owner).id();
+        return wantService.create(message, Category.FOOD, capacity, null, owner).id();
     }
 
     private int seats(Long wantId) {
@@ -224,7 +224,7 @@ class WantLifecycleIT {
         ClerkIdentity sam = follower("sam", dani);
         wantService.close(pizza, dani);
 
-        WantResponse reopened = wantService.reopen(pizza, dani);
+        WantResponse reopened = wantService.reopen(pizza, null, dani);
         signupService.signUp(pizza, sam);
 
         assertThat(reopened.status()).isEqualTo(WantStatus.ACTIVE);
@@ -240,7 +240,7 @@ class WantLifecycleIT {
         Long pizza = want(dani, "Pizza Friday", 4);
         ClerkIdentity alex = member("alex", dani, pizza);
 
-        WantResponse reopened = wantService.reopen(pizza, dani);
+        WantResponse reopened = wantService.reopen(pizza, null, dani);
 
         assertThat(reopened.status()).isEqualTo(WantStatus.ACTIVE);
         assertThat(ofType(alex, NotificationType.WANT_REOPENED)).isEmpty();
@@ -306,8 +306,9 @@ class WantLifecycleIT {
         wantService.cancel(pizza, dani);
 
         assertThatThrownBy(() -> wantService.close(pizza, dani)).isInstanceOf(WantCancelledException.class);
-        assertThatThrownBy(() -> wantService.reopen(pizza, dani)).isInstanceOf(WantCancelledException.class);
-        assertThatThrownBy(() -> wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, dani))
+        assertThatThrownBy(() -> wantService.reopen(pizza, null, dani)).isInstanceOf(WantCancelledException.class);
+        assertThatThrownBy(() -> wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, null, null,
+                dani))
                 .isInstanceOf(WantCancelledException.class);
     }
 
@@ -319,10 +320,10 @@ class WantLifecycleIT {
         ClerkIdentity alex = member("alex", dani, pizza);
         wantService.close(pizza, dani);
 
-        assertThatThrownBy(() -> wantService.update(pizza, "Pizza Saturday", Category.FOOD, 6, null, dani))
+        assertThatThrownBy(() -> wantService.update(pizza, "Pizza Saturday", Category.FOOD, 6, null, null, null, dani))
                 .isInstanceOf(WantClosedException.class);
-        wantService.reopen(pizza, dani);
-        WantResponse edited = wantService.update(pizza, "Pizza Saturday", Category.FOOD, 6, null, dani);
+        wantService.reopen(pizza, null, dani);
+        WantResponse edited = wantService.update(pizza, "Pizza Saturday", Category.FOOD, 6, null, null, null, dani);
 
         assertThat(edited.message()).isEqualTo("Pizza Saturday");
         assertThat(edited.capacity()).isEqualTo(6);

@@ -158,12 +158,12 @@ Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/wants` | — | `200` your wants and those of people you follow, each `{id, message, category, userId, username, imageUrl, capacity, seatsTaken, signedUp, status, happening}`; cancelled wants are left out, ended ones stay | `400` unknown `?category=` |
+| `GET` | `/wants` | — | `200` your wants and those of people you follow, each `{id, message, category, userId, username, imageUrl, capacity, seatsTaken, signedUp, status, happening, expiresAt}`; cancelled wants are left out, ended ones stay | `400` unknown `?category=` |
 | `GET` | `/wants?category=FOOD` | — | `200` filtered list | `400` unknown or lowercase value |
-| `POST` | `/wants` | `{message, category, capacity?, openInvite?}` | `201` created want, owned by you, with you in its first seat; `openInvite: true` gives it no seat limit | `400` invalid body, `capacity` below 1, or `capacity` with `openInvite` |
-| `PUT` | `/wants/{id}` | `{message, category, capacity?, openInvite?}` | `200` updated want; leaving out `capacity` keeps it; `openInvite: true` removes the limit, `false` limits an open want to the people already in | `400` invalid body, capacity lowered, a capacity for an open want, or `capacity` with `openInvite`; `403` not yours, `404` unknown want, `409` closed, ended or cancelled |
+| `POST` | `/wants` | `{message, category, capacity?, openInvite?, expiresAt?}` | `201` created want, owned by you, with you in its first seat; `openInvite: true` gives it no seat limit; `expiresAt` is its deadline | `400` invalid body, `capacity` below 1, `capacity` with `openInvite`, or `expiresAt` in the past |
+| `PUT` | `/wants/{id}` | `{message, category, capacity?, openInvite?, expiresAt?, noDeadline?}` | `200` updated want; leaving out `capacity` or `expiresAt` keeps it; `openInvite: true` removes the limit, `false` limits an open want to the people already in; `expiresAt` sets or moves the deadline, `noDeadline: true` removes it | `400` invalid body, capacity lowered, a capacity for an open want, `capacity` with `openInvite`, `expiresAt` in the past, or `expiresAt` with `noDeadline`; `403` not yours, `404` unknown want, `409` closed (its deadline passed included), ended or cancelled |
 | `POST` | `/wants/{id}/close` | — | `200` the want, now `CLOSED`; closing again changes nothing | `403` not yours, `404` unknown want, `409` ended or cancelled |
-| `POST` | `/wants/{id}/reopen` | — | `200` the want, `ACTIVE` again; reopening an active want changes nothing | `403` not yours, `404` unknown want, `409` ended or cancelled |
+| `POST` | `/wants/{id}/reopen` | optional `{expiresAt}` | `200` the want, `ACTIVE` again, its old deadline dropped and `expiresAt` the new one if given; reopening an active want changes nothing | `400` `expiresAt` in the past, `403` not yours, `404` unknown want, `409` ended or cancelled |
 | `POST` | `/wants/{id}/start` | — | `200` the want, `happening: true`, its status unchanged; starting again changes nothing | `403` not yours, `404` unknown want, `409` ended or cancelled |
 | `POST` | `/wants/{id}/end` | — | `200` the want, now `ENDED`; ending again changes nothing | `403` not yours, `404` unknown want, `409` not happening, or cancelled |
 | `DELETE` | `/wants/{id}` | — | `204`; **cancels** the want rather than deleting it, and cancelling again changes nothing | `403` not yours, `404` unknown want, `409` ended |
@@ -176,6 +176,7 @@ Categories are `FOOD`, `MOVIE`, `GAME` and `TRIP`, matched by exact name — `fo
 - **Cancelling** is final. The want leaves the feed, but its row, its lineup and the notifications about it stay, so "dani cancelled 'Pizza Friday'" still has something to point at.
 - **Starting** says the want is happening now, and sets `happening`. It doesn't change who can join: an active want still takes signups and edits while it happens, a closed one keeps its lineup fixed. You can start an active or a closed want.
 - **Ending** is for a happening want, and is final. It becomes `ENDED` and stays in the feed, but nothing about it can change any more, and it can't be cancelled.
+- **A deadline** (`expiresAt`, optional, always in the future when set) closes the want when it passes, as if the owner had closed it. It is `CLOSED` from that very moment, so signups, withdrawals and edits are refused at once. Within a minute a job inside the API records when it closed and tells everyone signed up, the owner too (`WANT_EXPIRED`). Changing the deadline in an edit tells everyone signed up (`WANT_DEADLINE_CHANGED`). Reopening takes a new deadline if you send one; otherwise it keeps a deadline still ahead and clears one that has passed.
 
 Each of these tells everyone signed up except the owner, and doing one twice tells nobody twice.
 
@@ -187,6 +188,104 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
   -d '{"message":"Finish Elden Ring","category":"GAME"}' \
   localhost:8080/wants
 ```
+
+### How status and notifications are decided
+
+The rules above, and those for signups below, as decision trees. 🔔 marks a notification and who gets it; "lineup" means everyone signed up except the owner. Two patterns cover most of it: **doing something twice changes nothing and notifies nobody**, and **a final state (cancelled or ended) answers 409 to everything** except repeating the action that made it final.
+
+**Status** (`Want.getStatus(now)`, checked in this order):
+
+```
+cancelled_at set? ──yes──▶ CANCELLED   (final, hidden from the feed)
+      │no
+ended_at set? ─────yes──▶ ENDED       (final, stays in the feed)
+      │no
+closed_at set, OR expires_at ≤ now? ──yes──▶ CLOSED   (lineup fixed)
+      │no
+      ▼
+    ACTIVE   (takes signups, withdrawals, edits)
+
+happening (separate flag) = started_at set AND not ended AND not cancelled
+```
+
+**The owner's actions** (anyone else gets 403; an unknown want 404):
+
+```
+CREATE ──────────────▶ ACTIVE, owner seated ─────────────────────────── 🔔 WANT_CREATED → owner
+
+EDIT (PUT)
+ ├─ invalid body? (past deadline, expiresAt + noDeadline, capacity + openInvite) ─▶ 400
+ ├─ CANCELLED / ENDED / CLOSED (incl. deadline passed) ─▶ 409
+ ├─ capacity lowered, or capacity on an open want ─▶ 400
+ └─ ACTIVE ─▶ saved, then one 🔔 per kind of change, to the lineup:
+       renamed or new category ──▶ WANT_UPDATED
+       limit removed ────────────▶ WANT_OPEN_INVITE
+       open want limited ────────▶ WANT_LIMITED
+       deadline set/moved/removed ▶ WANT_DEADLINE_CHANGED
+       nothing changed ──────────▶ (none)
+
+CLOSE
+ ├─ CANCELLED / ENDED ─▶ 409
+ ├─ CLOSED (incl. deadline passed) ─▶ no change, no 🔔
+ └─ ACTIVE ─▶ closed_at = now ──────────────────────────────── 🔔 WANT_CLOSED → lineup
+
+REOPEN (optional new deadline)
+ ├─ CANCELLED / ENDED ─▶ 409
+ ├─ ACTIVE ─▶ no change, no 🔔 (a new deadline is ignored; use EDIT)
+ └─ CLOSED ─▶ closed_at cleared, and the deadline:
+       new one sent ───────▶ the new one
+       none, old one ahead ─▶ kept
+       none, old one passed ▶ cleared
+     ─────────────────────────────────────────────────────── 🔔 WANT_REOPENED → lineup
+
+START
+ ├─ CANCELLED / ENDED ─▶ 409
+ ├─ already happening ─▶ no change, no 🔔
+ └─ ACTIVE or CLOSED ─▶ happening, status unchanged ──────── 🔔 WANT_STARTED → lineup
+
+END
+ ├─ ENDED ─▶ no change, no 🔔
+ ├─ CANCELLED ─▶ 409
+ ├─ not happening ─▶ 409
+ └─ happening ─▶ ENDED (final) ───────────────────────────── 🔔 WANT_ENDED → lineup
+
+CANCEL (DELETE)
+ ├─ ENDED ─▶ 409
+ ├─ CANCELLED ─▶ no change, no 🔔
+ └─ ACTIVE or CLOSED ─▶ CANCELLED (final, row kept) ──────── 🔔 WANT_CANCELLED → lineup
+```
+
+**Everyone else's actions:**
+
+```
+SIGN UP
+ ├─ not ACTIVE?
+ │    ├─ you can't see it (not in its lineup, don't follow the owner) ─▶ 404
+ │    └─ you can see it ─▶ 409 (closed / ended / cancelled; a passed deadline counts as closed)
+ ├─ already in the lineup ─▶ no change, no 🔔
+ ├─ you don't follow the owner ─▶ 404
+ ├─ full (and not an open invite) ─▶ 409
+ └─ seat taken ──────────────────────────────────────────── 🔔 WANT_SIGNUP → owner
+
+WITHDRAW
+ ├─ not ACTIVE? ─▶ 404 or 409, as above
+ ├─ you're the owner ─▶ 400
+ ├─ you held a seat ─▶ seat freed ───────────────────────── 🔔 WANT_WITHDRAWN → owner
+ ├─ no seat, can't see it ─▶ 404
+ └─ no seat, can see it ─▶ no change, no 🔔
+
+FOLLOW ─▶ first time only ───────────────────────────────── 🔔 FOLLOW → the person followed
+```
+
+**The expiry job** (every minute, inside the API):
+
+```
+for each want with: closed_at empty AND not cancelled AND not ended AND expires_at ≤ now
+   ─▶ closed_at = now (when the job ran) ─────────────────── 🔔 WANT_EXPIRED → lineup AND owner
+   (each want once: a repeat or a second run finds closed_at set and skips it)
+```
+
+Keep these trees in step with the code: a new action, status or notification type changes them in the same PR.
 
 ### Signups
 
@@ -259,6 +358,8 @@ When someone follows you, you get a notification. The bell beside your account m
 | `WANT_ENDED` | everyone signed up, not the owner | the owner ends it after it happened |
 | `WANT_OPEN_INVITE` | everyone signed up, not the owner | the owner removes the seat limit, so they can bring others |
 | `WANT_LIMITED` | everyone signed up, not the owner | the owner limits an open want to the people already in |
+| `WANT_DEADLINE_CHANGED` | everyone signed up, not the owner | the owner sets, moves or removes the deadline |
+| `WANT_EXPIRED` | everyone signed up, **and** the owner | the want closed at its deadline; the actor is the owner |
 
 `wantId` and `wantMessage` are null for a follow. `wantMessage` is the want's name when the notification was written, so it still reads correctly after a rename. Each edit is its own notification.
 
@@ -302,7 +403,7 @@ mvn test -Dtest=WantControllerTest#createsWant  # one method
 
 Tests are `@WebMvcTest` slices with a mocked service layer, so **they need no database** and pass on a machine with nothing running. They `@Import(SecurityConfig.class)` so requests go through the real security rules, and they sign in with Spring Security's `jwt()` request post-processor. The `JwtDecoder` is a mock, so **they never contact Clerk**. `WantServiceTest` covers the ownership rule, the feed and that capacity is never lowered, `SignupServiceTest` that the owner cannot withdraw, `FollowServiceTest` who may follow whom and that only a new follow notifies, and `NotificationServiceTest` that you only ever read and mark your own, directly, since the controller tests mock the service away.
 
-**Database tests** (`*IT.java`, run by `mvn verify`) are the other kind. Each run starts a throwaway PostgreSQL with PostGIS in Docker through [Testcontainers](https://testcontainers.com), runs every Flyway migration on it from empty, and calls the real services and repositories, committing for real. They catch what the fakes above cannot: SQL that is wrong, a migration that fails or does not match its entity, a constraint, a transaction that does not roll back. `FollowNotificationsIT` checks that a follow notifies exactly once, that the follow is undone if its notification fails, and how marking read behaves. `WantSignupsIT` checks capacity, signing up and withdrawing, who is notified of what, and the race for the last seat: one test holds the first signup open and shows the second waits for it, another sends five at once for one seat. Both fail every time if the row lock is removed. `WantLifecycleIT` checks closing, reopening and cancelling: what each still allows, who hears about it, and that doing one twice notifies once. `WantHappeningIT` does the same for starting and ending, and checks that a happening active want still takes signups. `WantSignupsIT` also covers open invites: no limit, still only for followers, and a limit taken from the real lineup when one is limited again. The first run downloads the image; after that the container starts in a few seconds. They never touch the development database on port 5433.
+**Database tests** (`*IT.java`, run by `mvn verify`) are the other kind. Each run starts a throwaway PostgreSQL with PostGIS in Docker through [Testcontainers](https://testcontainers.com), runs every Flyway migration on it from empty, and calls the real services and repositories, committing for real. They catch what the fakes above cannot: SQL that is wrong, a migration that fails or does not match its entity, a constraint, a transaction that does not roll back. `FollowNotificationsIT` checks that a follow notifies exactly once, that the follow is undone if its notification fails, and how marking read behaves. `WantSignupsIT` checks capacity, signing up and withdrawing, who is notified of what, and the race for the last seat: one test holds the first signup open and shows the second waits for it, another sends five at once for one seat. Both fail every time if the row lock is removed. `WantLifecycleIT` checks closing, reopening and cancelling: what each still allows, who hears about it, and that doing one twice notifies once. `WantHappeningIT` does the same for starting and ending, and checks that a happening active want still takes signups. `WantSignupsIT` also covers open invites: no limit, still only for followers, and a limit taken from the real lineup when one is limited again. `WantExpiryIT` checks deadlines: that a want past its deadline refuses signups and edits before the job has run, that the job closes it and tells the lineup and the owner once, even when two runs race, that it waits for and then skips a want being reopened, and that one run catches up on everything missed during downtime. The scheduled job is off in tests (`src/test/resources/config/application.properties`), so it can't race them. The first run downloads the image; after that the container starts in a few seconds. They never touch the development database on port 5433.
 
 Frontend checks:
 
@@ -336,7 +437,7 @@ To replay migrations from scratch, which destroys all data:
 docker compose down -v && docker compose up -d
 ```
 
-`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. `V8__clerk_picture_drop_nickname.sql` drops `nickname`, renames `s3_url` to `image_url` and empties it, once the profile page went and the picture became Clerk's. `V9__create_follows.sql` creates `follows`, one row per follower and followee, unique per pair, never yourself. `V10__seed_test_users.sql` adds the test users `alex`, `sam` and `jordan` with two wants each; like V2, delete it before real use. `V11__create_notifications.sql` creates `notifications`: who it is for, who did it, what kind, when, and when it was read. `V12__want_capacity_and_signups.sql` adds `wants.capacity` (at least 1, the owner included), creates `want_signups`, one row per seat, unique per want and person, seats each existing want's owner, and gives notifications the want they are about, its message and, for a rename, the old one. `V13__want_close_and_cancel.sql` adds `wants.closed_at` and `wants.cancelled_at`, and the three notification types for them. `V14__want_start_and_end.sql` adds `wants.started_at` and `wants.ended_at`, and `WANT_STARTED` and `WANT_ENDED`. `V15__want_open_invite.sql` lets `wants.capacity` be null, for an open invite, and adds `WANT_OPEN_INVITE` and `WANT_LIMITED`. V3 and V4 stay even though their table is gone, because applied migrations must never change.
+`V2__seed_sample_data.sql` inserts the sample user and wants, and `V4__seed_dani_profile.sql` gives that user a profile. Both run in every environment Flyway touches, so delete them before using this schema for anything real. `V3__create_user_profiles.sql` creates the profiles table and stays. `V5__add_users_clerk_id.sql` adds `users.clerk_id`, which links a user to their Clerk account. It is nullable only because `dani` predates logins. `V6__add_users_email_last_sign_in.sql` adds `users.email` and `users.last_sign_in_at`, both copied from the Clerk token. `V7__merge_user_profiles_into_users.sql` moves each profile's nickname and avatar onto its user, then drops `user_profiles`. The profile's hand-typed email is kept only where Clerk hasn't supplied one, as for `dani`. `V8__clerk_picture_drop_nickname.sql` drops `nickname`, renames `s3_url` to `image_url` and empties it, once the profile page went and the picture became Clerk's. `V9__create_follows.sql` creates `follows`, one row per follower and followee, unique per pair, never yourself. `V10__seed_test_users.sql` adds the test users `alex`, `sam` and `jordan` with two wants each; like V2, delete it before real use. `V11__create_notifications.sql` creates `notifications`: who it is for, who did it, what kind, when, and when it was read. `V12__want_capacity_and_signups.sql` adds `wants.capacity` (at least 1, the owner included), creates `want_signups`, one row per seat, unique per want and person, seats each existing want's owner, and gives notifications the want they are about, its message and, for a rename, the old one. `V13__want_close_and_cancel.sql` adds `wants.closed_at` and `wants.cancelled_at`, and the three notification types for them. `V14__want_start_and_end.sql` adds `wants.started_at` and `wants.ended_at`, and `WANT_STARTED` and `WANT_ENDED`. `V15__want_open_invite.sql` lets `wants.capacity` be null, for an open invite, and adds `WANT_OPEN_INVITE` and `WANT_LIMITED`. `V16__want_deadline.sql` adds `wants.expires_at`, nullable for no deadline, and `WANT_DEADLINE_CHANGED` and `WANT_EXPIRED`. V3 and V4 stay even though their table is gone, because applied migrations must never change.
 
 If you delete a migration that hasn't run yet and replace it with another of the same version, run `mvn clean` first. Otherwise the old file's compiled copy in `target/classes` stays behind, and Flyway refuses to start with *"Found more than one migration with version"*.
 

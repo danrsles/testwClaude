@@ -1,8 +1,11 @@
 package com.example.demo.dto;
 
+import java.time.Instant;
+
 import com.example.demo.models.Category;
 
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Future;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -21,12 +24,18 @@ import jakarta.validation.constraints.NotNull;
  * rather than a null capacity because a missing capacity already means 1 or
  * "keep". Left out, it changes nothing. Sending it, true or false, with a
  * capacity is a 400: one contradicts the number, the other would ignore it.
+ *
+ * expiresAt is the deadline, which must be in the future (400). Left out, an
+ * edit keeps the deadline as it was, for the same reason as capacity, so
+ * removing it takes noDeadline true. Sending both is a 400.
  */
 public record WantRequest(
         @NotBlank String message,
         @NotNull Category category,
         @Min(1) Integer capacity,
-        Boolean openInvite) {
+        Boolean openInvite,
+        @Future Instant expiresAt,
+        Boolean noDeadline) {
 
     /** The capacity for a new want: none for an open invite, else 1, the owner alone, unless one was given. */
     public Integer capacityOnCreate() {
@@ -40,5 +49,11 @@ public record WantRequest(
     @AssertTrue(message = "give a capacity or openInvite, not both")
     public boolean isCapacityOrOpenInvite() {
         return openInvite == null || capacity == null;
+    }
+
+    /** A deadline and noDeadline together fail validation: one sets it, the other removes it. */
+    @AssertTrue(message = "give expiresAt or noDeadline, not both")
+    public boolean isDeadlineOrNoDeadline() {
+        return expiresAt == null || !Boolean.TRUE.equals(noDeadline);
     }
 }

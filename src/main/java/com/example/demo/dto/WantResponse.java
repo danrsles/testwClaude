@@ -1,5 +1,7 @@
 package com.example.demo.dto;
 
+import java.time.Instant;
+
 import com.example.demo.models.Category;
 import com.example.demo.models.Want;
 import com.example.demo.models.WantStatus;
@@ -16,11 +18,15 @@ import com.example.demo.models.WantStatus;
  * a seat. Neither is on the entity, so WantService works them out. status
  * is ACTIVE, CLOSED, ENDED or CANCELLED; a full want is still ACTIVE.
  * happening says it is live now, whatever its status says about joining.
+ * expiresAt is the deadline, or null for none; once it has passed, status
+ * says CLOSED.
  */
 public record WantResponse(Long id, String message, Category category, Long userId, String username,
-        String imageUrl, Integer capacity, int seatsTaken, boolean signedUp, WantStatus status, boolean happening) {
+        String imageUrl, Integer capacity, int seatsTaken, boolean signedUp, WantStatus status, boolean happening,
+        Instant expiresAt) {
 
-    public static WantResponse from(Want want, int seatsTaken, boolean signedUp) {
+    /** now decides whether the deadline has passed. */
+    public static WantResponse from(Want want, int seatsTaken, boolean signedUp, Instant now) {
         return new WantResponse(
                 want.getId(),
                 want.getMessage(),
@@ -31,7 +37,8 @@ public record WantResponse(Long id, String message, Category category, Long user
                 want.getCapacity(),
                 seatsTaken,
                 signedUp,
-                want.getStatus(),
-                want.isHappening());
+                want.getStatus(now),
+                want.isHappening(),
+                want.getExpiresAt());
     }
 }

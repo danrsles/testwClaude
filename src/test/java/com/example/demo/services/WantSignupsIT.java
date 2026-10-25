@@ -87,7 +87,7 @@ class WantSignupsIT {
     }
 
     private Long want(ClerkIdentity owner, String message, int capacity) {
-        return wantService.create(message, Category.FOOD, capacity, owner).id();
+        return wantService.create(message, Category.FOOD, capacity, null, owner).id();
     }
 
     private int seats(Long wantId) {
@@ -118,7 +118,7 @@ class WantSignupsIT {
         ClerkIdentity dani = person("dani");
         ClerkIdentity alex = follower("alex", dani);
         ClerkIdentity sam = follower("sam", dani);
-        WantResponse created = wantService.create("Pizza Friday", Category.FOOD, 4, dani);
+        WantResponse created = wantService.create("Pizza Friday", Category.FOOD, 4, null, dani);
         Long pizza = created.id();
         Long tacos = want(dani, "Tacos", 2);
         signupService.signUp(pizza, alex);
@@ -389,7 +389,7 @@ class WantSignupsIT {
         Long pizza = want(dani, "Pizza Friday", 4);
         signupService.signUp(pizza, alex);
 
-        wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, dani);
+        wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, null, null, dani);
 
         assertThat(ofType(dani, NotificationType.WANT_SIGNUP).getFirst().getWantMessage())
                 .isEqualTo("Pizza Friday");
@@ -405,7 +405,7 @@ class WantSignupsIT {
         signupService.signUp(pizza, alex);
         signupService.signUp(pizza, sam);
 
-        wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, dani);
+        wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, null, null, dani);
 
         for (ClerkIdentity member : List.of(alex, sam)) {
             List<Notification> updates = ofType(member, NotificationType.WANT_UPDATED);
@@ -426,7 +426,7 @@ class WantSignupsIT {
         Long pizza = want(dani, "Pizza Friday", 4);
         signupService.signUp(pizza, alex);
 
-        wantService.update(pizza, "Pizza Friday", Category.MOVIE, null, null, dani);
+        wantService.update(pizza, "Pizza Friday", Category.MOVIE, null, null, null, null, dani);
 
         List<Notification> updates = ofType(alex, NotificationType.WANT_UPDATED);
         assertThat(updates).hasSize(1);
@@ -442,7 +442,7 @@ class WantSignupsIT {
         Long pizza = want(dani, "Pizza Friday", 4);
         signupService.signUp(pizza, alex);
 
-        wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, dani);
+        wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, null, null, dani);
 
         assertThat(ofType(dani, NotificationType.WANT_UPDATED)).isEmpty();
     }
@@ -454,8 +454,8 @@ class WantSignupsIT {
         Long pizza = want(dani, "Pizza Friday", 4);
         signupService.signUp(pizza, alex);
 
-        wantService.update(pizza, "Pizza Friday", Category.FOOD, 6, null, dani);
-        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, null, dani);
+        wantService.update(pizza, "Pizza Friday", Category.FOOD, 6, null, null, null, dani);
+        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, null, null, null, dani);
 
         assertThat(ofType(alex, NotificationType.WANT_UPDATED)).isEmpty();
     }
@@ -468,8 +468,8 @@ class WantSignupsIT {
         Long pizza = want(dani, "Pizza Friday", 4);
         signupService.signUp(pizza, alex);
 
-        wantService.update(pizza, "Pizza Sat", Category.FOOD, null, null, dani);
-        wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, dani);
+        wantService.update(pizza, "Pizza Sat", Category.FOOD, null, null, null, null, dani);
+        wantService.update(pizza, "Pizza Saturday", Category.FOOD, null, null, null, null, dani);
 
         assertThat(ofType(alex, NotificationType.WANT_UPDATED))
                 .extracting(Notification::getPreviousMessage, Notification::getWantMessage)
@@ -487,7 +487,7 @@ class WantSignupsIT {
         signupService.signUp(pizza, alex);
         assertThatThrownBy(() -> signupService.signUp(pizza, sam)).isInstanceOf(WantFullException.class);
 
-        wantService.update(pizza, "Pizza for three", Category.FOOD, 3, null, dani);
+        wantService.update(pizza, "Pizza for three", Category.FOOD, 3, null, null, null, dani);
 
         SignupEventDetails samIn = signupService.signUp(pizza, sam);
         assertThat(samIn.capacity()).isEqualTo(3);
@@ -499,7 +499,7 @@ class WantSignupsIT {
     void anOpenInviteTakesEveryoneWhoCanSeeIt() {
         ClerkIdentity dani = person("dani");
         List<ClerkIdentity> friends = List.of(follower("alex", dani), follower("sam", dani), follower("jordan", dani));
-        Long games = wantService.create("Board games", Category.GAME, null, dani).id();
+        Long games = wantService.create("Board games", Category.GAME, null, null, dani).id();
 
         for (ClerkIdentity friend : friends) {
             signupService.signUp(games, friend);
@@ -516,7 +516,7 @@ class WantSignupsIT {
     void anOpenInviteStillOnlyTakesPeopleWhoCanSeeIt() {
         ClerkIdentity dani = person("dani");
         ClerkIdentity stranger = person("stranger");
-        Long games = wantService.create("Board games", Category.GAME, null, dani).id();
+        Long games = wantService.create("Board games", Category.GAME, null, null, dani).id();
 
         assertThatThrownBy(() -> signupService.signUp(games, stranger)).isInstanceOf(WantNotFoundException.class);
         assertThat(seats(games)).isEqualTo(1);
@@ -529,7 +529,7 @@ class WantSignupsIT {
         Long pizza = want(dani, "Pizza Friday", 1);
         assertThatThrownBy(() -> signupService.signUp(pizza, alex)).isInstanceOf(WantFullException.class);
 
-        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, true, dani);
+        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, true, null, null, dani);
 
         SignupEventDetails alexIn = signupService.signUp(pizza, alex);
         assertThat(alexIn.capacity()).isNull();
@@ -543,11 +543,11 @@ class WantSignupsIT {
         ClerkIdentity alex = follower("alex", dani);
         ClerkIdentity sam = follower("sam", dani);
         ClerkIdentity jordan = follower("jordan", dani);
-        Long games = wantService.create("Board games", Category.GAME, null, dani).id();
+        Long games = wantService.create("Board games", Category.GAME, null, null, dani).id();
         signupService.signUp(games, alex);
         signupService.signUp(games, sam);
 
-        WantResponse limited = wantService.update(games, "Board games", Category.GAME, null, false, dani);
+        WantResponse limited = wantService.update(games, "Board games", Category.GAME, null, false, null, null, dani);
 
         assertThat(limited.capacity()).isEqualTo(3);
         assertThatThrownBy(() -> signupService.signUp(games, jordan)).isInstanceOf(WantFullException.class);
@@ -565,10 +565,10 @@ class WantSignupsIT {
         Long pizza = want(dani, "Pizza Friday", 4);
         signupService.signUp(pizza, alex);
 
-        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, true, dani);
-        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, true, dani);
-        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, false, dani);
-        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, false, dani);
+        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, true, null, null, dani);
+        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, true, null, null, dani);
+        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, false, null, null, dani);
+        wantService.update(pizza, "Pizza Friday", Category.FOOD, null, false, null, null, dani);
 
         assertThat(ofType(alex, NotificationType.WANT_OPEN_INVITE)).hasSize(1);
         assertThat(ofType(alex, NotificationType.WANT_LIMITED)).hasSize(1);

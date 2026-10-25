@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); steps 6 to 8 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); step 6's API (deadline and expiry) built, its screen next; steps 7 and 8 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 
@@ -20,10 +20,10 @@
 | Starting | The owner starts an active or closed want (`WANT_STARTED` to the lineup). Starting a happening want changes nothing. |
 | Ending | Only a happening want can end (409 otherwise); the owner ends it (`WANT_ENDED` to the lineup). Final, like cancelling, but the want stays in the feed as `ENDED`: editing, closing, reopening, starting, cancelling, signing up and withdrawing are all 409. Ending twice changes nothing. Running the same want again is a later idea (repeat a want), not a reopen. |
 | Signing up or withdrawing when not active | 409 for everyone who can see the want, even someone already in the lineup repeating a signup, or someone withdrawing who holds no seat. The screen offers neither button there, so the API simply refuses. Anyone who cannot see it gets 404, so the 409 never reveals that it exists. |
-| Deadline | Optional. `expires_at` may be null: the want stays open until the owner closes it. |
-| What happens at the deadline? | The want closes automatically, exactly as if the owner had closed it, and the lineup is notified. |
+| Deadline | Optional. `expires_at` may be null: the want stays open until the owner closes it. It must be in the future when set. The owner can set, move or remove it while the want is active (`PUT`, `noDeadline: true` to remove), which tells the lineup (`WANT_DEADLINE_CHANGED`); sending the same one again tells nobody. The screen offers "in an hour", "in a week" or a date, and sends the instant. |
+| What happens at the deadline? | The want is closed from that moment, as if the owner had closed it: signups, withdrawals and edits are refused at once. Within a minute the expiry job records `closed_at` (when it ran) and tells the lineup **and the owner** (`WANT_EXPIRED`), since the owner did not close it. Pressing Close in that gap changes nothing; the job's `WANT_EXPIRED` follows. |
 | After closing | The lineup is fixed, and so is the want: editing it is a 409 until the owner reopens it. The owner can reopen it, which notifies the lineup, or cancel it. |
-| Reopening an expired want | Needs a new future deadline or none, or the expiry job would close it again within a minute. |
+| Reopening | Takes an optional new deadline, which must be in the future (400) and replaces the old one. Without one, a deadline still ahead is kept and one that has passed, even while the want was closed, is cleared, or the want would close again at once. Reopening an expired want the job has not reached yet sends `WANT_REOPENED` with no `WANT_EXPIRED` before it; accepted. |
 | Cancelling | Replaces deleting, from active or closed. The want is hidden from the feed and the lineup is notified. Final: closing, reopening or editing it afterwards is a 409, and only its lineup can still see it. |
 | Doing one twice | Closing a closed want, reopening an active one, starting a happening one, ending an ended one or cancelling a cancelled one changes nothing and notifies nobody. |
 | Editing | While the want is active, the message and category can change. Either change notifies the lineup (`WANT_UPDATED`), keeping the old name when it was renamed. Each edit is its own notification; grouping is for the screen. Capacity can be raised but never lowered, and raising it notifies nobody. |
@@ -51,11 +51,11 @@ notifications  id, recipient_id, actor_id, type, want_id NULL, want_message NULL
                created_at, read_at NULL                              -- NULL = unread
                type IN ('FOLLOW', 'WANT_CREATED', 'WANT_SIGNUP', 'WANT_WITHDRAWN', 'WANT_UPDATED',
                         'WANT_CLOSED', 'WANT_REOPENED', 'WANT_CANCELLED', 'WANT_STARTED', 'WANT_ENDED',
-                        'WANT_OPEN_INVITE', 'WANT_LIMITED')
+                        'WANT_OPEN_INVITE', 'WANT_LIMITED', 'WANT_DEADLINE_CHANGED', 'WANT_EXPIRED')
                INDEX (recipient_id, read_at)
 ```
 
-A want is **active** when it is neither cancelled, ended nor closed (from step 6, also when its deadline, if any, is still in the future). It takes signups while it is active and has a free seat.
+A want is **active** when it is neither cancelled, ended nor closed, and its deadline, if any, is still in the future. It takes signups while it is active and has a free seat.
 
 Following the existing conventions: `BIGINT GENERATED BY DEFAULT AS IDENTITY` ids, `VARCHAR` plus `CHECK` for `type` rather than a native enum, and new migrations from `V11` on.
 
@@ -89,13 +89,15 @@ While happening, the status keeps working as before: an active happening want ca
 | `WANT_SIGNUP` | the owner | a signup succeeds |
 | `WANT_WITHDRAWN` | the owner | a signup is removed |
 | `WANT_UPDATED` | the lineup, not the owner | the owner renames or recategorises it |
-| `WANT_CLOSED` | the lineup, not the owner | the owner closes it, or the expiry job does |
+| `WANT_CLOSED` | the lineup, not the owner | the owner closes it |
 | `WANT_REOPENED` | the lineup, not the owner | the owner reopens it |
 | `WANT_CANCELLED` | the lineup, not the owner | the owner cancels it |
 | `WANT_STARTED` | the lineup, not the owner | the owner starts it |
 | `WANT_ENDED` | the lineup, not the owner | the owner ends it |
 | `WANT_OPEN_INVITE` | the lineup, not the owner | the owner removes the seat limit |
 | `WANT_LIMITED` | the lineup, not the owner | the owner limits an open want to the people already in |
+| `WANT_DEADLINE_CHANGED` | the lineup, not the owner | the owner sets, moves or removes the deadline |
+| `WANT_EXPIRED` | the lineup **and** the owner (the actor) | the expiry job closes it at its deadline |
 
 Lineup notifications are one `INSERT ... SELECT` from `want_signups`, in the same transaction as the state change, so either everyone is told or the change did not happen.
 
@@ -105,8 +107,8 @@ Lineup notifications are one `INSERT ... SELECT` from `want_signups`, in the sam
 - **One generic table.** A follow and a signup are the same kind of event. New events add a `type`, not a table.
 - **The database decides capacity.** Two people taking the last seat at once must not both get in, so a signup first locks the want's row, then counts and inserts. The count must be its own statement after the lock: a single `INSERT ... SELECT ... FOR UPDATE` lets both in, because a signup never changes the `wants` row, so PostgreSQL never re-checks the waiting statement, and its count from before the wait still shows a free seat. A new statement under READ COMMITTED sees the first signup once it commits. Every other change to a want (edit, close, reopen, cancel) takes the same lock. Same reasoning as `followIfAbsent` and `insertIfAbsent`: no catching constraint exceptions, which would mark the transaction rollback-only.
 - **Close, reopen and cancel check the status in Java, under that lock.** The row is locked, so a second close waits, then sees `closed_at` set and does nothing, which is what stops a repeat notifying twice. The times come from the application's clock. The expiry job (step 6) runs without the lock, so it uses a guarded `UPDATE` instead.
-- **"Active" is checked on read.** Signups test the deadline in the query, so nothing has to close wants on time for correctness.
-- **The expiry job exists only for the notification.** A `@Scheduled` task runs `UPDATE wants SET closed_at = now() WHERE closed_at IS NULL AND cancelled_at IS NULL AND expires_at < now() RETURNING id` and notifies each lineup returned. The update flips each want exactly once, so even two instances running the job would not notify twice.
+- **"Active" is checked on read.** `Want.getStatus(now)` counts a passed deadline as closed, and every signup, withdrawal and edit checks it in Java under the row lock, so nothing has to close wants on time for correctness. `now` comes from an injected `Clock`, so unit tests can pin it.
+- **The expiry job exists only to record it and notify.** `WantExpiryJob` runs every minute (`fixedDelay`, so runs never overlap) inside the API, not as a separate worker: a worker would need its own connections out of Aiven's ~17, its own deploy and a second copy of the SQL, for precision nobody sees behind 30-second polling. It runs one statement, `WITH expired AS (UPDATE wants SET closed_at = now() WHERE closed_at IS NULL AND cancelled_at IS NULL AND ended_at IS NULL AND expires_at <= now() RETURNING ...) INSERT INTO notifications ... FROM expired JOIN want_signups`. The guard flips each want once: a second run, or a second instance, waits on the row lock, re-checks the `WHERE` and skips it, so nobody is told twice and no lock library is needed. A reopen holding the lock is skipped the same way. There is no lower bound, so the first run after downtime catches up. `closed_at` is when it ran, not the deadline, so a late run shows as late.
 - **Cancel instead of delete.** Notifications point at wants. Deleting the row would take the link with it and leave "Dani cancelled …" with nothing to show.
 - **Notifications copy the want's message.** They still read correctly after the message is edited or the want is cancelled.
 - **Followers only.** The feed shows your own wants and those of people you follow, so signing up is limited to those wants in the API too, not only in the UI.
@@ -121,11 +123,11 @@ Lineup notifications are one `INSERT ... SELECT` from `want_signups`, in the sam
 | `POST /wants/{id}/signups` | sign up; idempotent, returns the lineup | 409 full, closed, ended, expired or cancelled; 404 not in your feed |
 | `DELETE /wants/{id}/signups` | withdraw; idempotent, returns the lineup | 409 closed, ended or cancelled; 400 owner; 404 not in your feed |
 | `POST /wants/{id}/close` | owner fixes the lineup; returns the want | 403 not the owner; 409 ended or cancelled |
-| `POST /wants/{id}/reopen` | owner reopens; returns the want. From step 6, with an optional new deadline | 403 not the owner; 409 ended or cancelled; 400 deadline in the past (step 6) |
+| `POST /wants/{id}/reopen` | owner reopens, dropping the old deadline, with an optional new one (`{"expiresAt"}`); returns the want | 403 not the owner; 409 ended or cancelled; 400 deadline in the past |
 | `POST /wants/{id}/start` | owner marks it happening; returns the want | 403 not the owner; 409 ended or cancelled |
 | `POST /wants/{id}/end` | owner ends a happening want; returns the want | 403 not the owner; 409 not happening, or cancelled |
 | `DELETE /wants/{id}` | cancels; 204 | 403 not the owner; 409 ended |
-| `PUT /wants/{id}` | edits the message and category, may raise capacity, open it (`openInvite: true`) or limit an open one to its lineup (`false`); a rename, new category, opening or limiting notifies the lineup | 400 capacity lowered, a capacity on an open want, or `capacity` with `openInvite`; 409 closed, ended or cancelled |
+| `PUT /wants/{id}` | edits the message and category, may raise capacity, open it (`openInvite: true`) or limit an open one to its lineup (`false`), and set, move or remove the deadline; a rename, new category, opening, limiting or new deadline notifies the lineup | 400 capacity lowered, a capacity on an open want, `capacity` with `openInvite`, a deadline in the past, or `expiresAt` with `noDeadline`; 409 closed (deadline passed included), ended or cancelled |
 
 Responses that show other people (actors, lineups) need their own records with public fields only, like `UserSummary`, never a `User`.
 
@@ -138,7 +140,7 @@ Each step is one PR and works without the ones after it.
 3. **Done. Close, reopen and cancel:** `closed_at`, `cancelled_at`, `status` in the responses, `WANT_CLOSED`, `WANT_REOPENED`, `WANT_CANCELLED`; delete becomes cancel. Reopen takes no deadline until step 6.
 4. **Done. Happening and ended:** `started_at`, `ended_at`, the `happening` flag and the `ENDED` status, `POST /wants/{id}/start` and `/end` under the same lock, `WANT_STARTED` and `WANT_ENDED`. The screen has Start and End buttons, "Happening now" and "Ended" labels, and texts for both notifications.
 5. **Done. Open invite:** a nullable `capacity` (null = no limit, never full), `openInvite` in the request both ways, `WANT_OPEN_INVITE` and `WANT_LIMITED`. The screen has an Open invite checkbox on Add and Edit, "N going" on open rows, and texts for both notifications.
-6. **Deadline and expiry job:** `expires_at`, signups refused after it, and automatic closing at the deadline.
+6. **Deadline and expiry job, API built:** `expires_at`, refused signups and edits after it, `WANT_DEADLINE_CHANGED` and `WANT_EXPIRED`, reopen with a new deadline, and the job. Next: the screen (a deadline picker, the deadline on each want, texts for both notifications).
 7. **Optional: live updates over SSE**, if polling is too slow.
 8. **Later: tell followers about new wants,** organised into groups, so people hear about wants they could join without opening the feed.
 
