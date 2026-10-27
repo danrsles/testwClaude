@@ -1,7 +1,7 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getToken } from '@clerk/react'
 import { getMe } from '../api/me'
 import {
@@ -66,7 +66,9 @@ function want(
   message: string,
   category: Category = 'FOOD',
   owner = DANI,
-  seats: Partial<Pick<Want, 'capacity' | 'seatsTaken' | 'lineup' | 'signedUp' | 'status' | 'happening'>> = {},
+  seats: Partial<
+    Pick<Want, 'capacity' | 'seatsTaken' | 'lineup' | 'signedUp' | 'status' | 'happening' | 'expiresAt'>
+  > = {},
 ): Want {
   return {
     id,
@@ -81,6 +83,7 @@ function want(
     signedUp: owner === DANI,
     status: 'ACTIVE',
     happening: false,
+    expiresAt: null,
     ...seats,
   }
 }
@@ -288,6 +291,7 @@ describe('Wants', () => {
     await screen.findByText('Ramen downtown')
 
     await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
 
     expect(reopenWant).toHaveBeenCalledWith(1)
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
@@ -877,5 +881,364 @@ describe('Wants', () => {
     await screen.findByRole('alert')
     const editor = screen.getByLabelText('Edit want')
     expect(editor.closest('li')!.contains(document.activeElement)).toBe(true)
+  })
+
+  describe('deadlines', () => {
+    // Sunday 25 October 2026, 9:00 in whatever time zone the tests run in.
+    // Built from local parts, and so is every expected deadline, so the tests
+    // check local-time arithmetic and pass in any zone. Only Date is faked, so
+    // promises and user-event's timers run as usual.
+    const NOW = new Date(2026, 9, 25, 9, 0)
+    const at = (...parts: [number, number, number, number, number]) => new Date(...parts).toISOString()
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(NOW)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // Date and time inputs take their value whole; typing into them in jsdom
+    // is unreliable, so set it as the browser would on a pick.
+    function pick(label: string, value: string) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } })
+    }
+
+    async function addTacos(choose: () => Promise<void> | void) {
+      vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await choose()
+      await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+    }
+
+    async function editRamen(expiresAt: string | null, change: () => Promise<void> | void) {
+      vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { expiresAt })])
+      vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+      await change()
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    }
+
+    it('sends no deadline when none is picked, and the row shows none', async () => {
+      await addTacos(() => {
+        expect(screen.getByLabelText('Deadline')).toHaveDisplayValue('No deadline')
+      })
+
+      expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD', capacity: 1 })
+      expect(within(row('Ramen downtown')).queryByText(/Closes/)).not.toBeInTheDocument()
+    })
+
+    it("'In 1 hour' sends a deadline one hour from now", async () => {
+      await addTacos(() => userEvent.selectOptions(screen.getByLabelText('Deadline'), 'In 1 hour'))
+
+      expect(createWant).toHaveBeenCalledWith(expect.objectContaining({ expiresAt: at(2026, 9, 25, 10, 0) }))
+    })
+
+    it("'In 1 week' sends a deadline one week from now", async () => {
+      // Seven days on the calendar at the same clock time, even across a clock change.
+      await addTacos(() => userEvent.selectOptions(screen.getByLabelText('Deadline'), 'In 1 week'))
+
+      expect(createWant).toHaveBeenCalledWith(expect.objectContaining({ expiresAt: at(2026, 10, 1, 9, 0) }))
+    })
+
+    it("'Tomorrow' sends noon tomorrow", async () => {
+      await addTacos(() => userEvent.selectOptions(screen.getByLabelText('Deadline'), 'Tomorrow'))
+
+      expect(createWant).toHaveBeenCalledWith(expect.objectContaining({ expiresAt: at(2026, 9, 26, 12, 0) }))
+    })
+
+    it('a picked date and time is sent as that moment in your time zone', async () => {
+      await addTacos(async () => {
+        await userEvent.selectOptions(screen.getByLabelText('Deadline'), 'Pick a date')
+        pick('Deadline date', '2026-10-30')
+        pick('Deadline time', '18:30')
+      })
+
+      expect(createWant).toHaveBeenCalledWith(expect.objectContaining({ expiresAt: at(2026, 9, 30, 18, 30) }))
+    })
+
+    it('a date picked without a time is noon that day', async () => {
+      await addTacos(async () => {
+        await userEvent.selectOptions(screen.getByLabelText('Deadline'), 'Pick a date')
+        pick('Deadline date', '2026-10-30')
+      })
+
+      expect(createWant).toHaveBeenCalledWith(expect.objectContaining({ expiresAt: at(2026, 9, 30, 12, 0) }))
+    })
+
+    it("today's date picked after noon is 23:59 today", async () => {
+      // Noon has passed, so noon would be in the past; the end of today is not.
+      vi.setSystemTime(new Date(2026, 9, 25, 15, 0))
+      await addTacos(async () => {
+        await userEvent.selectOptions(screen.getByLabelText('Deadline'), 'Pick a date')
+        pick('Deadline date', '2026-10-25')
+      })
+
+      expect(createWant).toHaveBeenCalledWith(expect.objectContaining({ expiresAt: at(2026, 9, 25, 23, 59) }))
+    })
+
+    it('a deadline in the past disables Add', async () => {
+      // The API refuses it with a 400; the button says so first.
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await userEvent.selectOptions(screen.getByLabelText('Deadline'), 'Pick a date')
+
+      pick('Deadline date', '2026-10-24')
+      expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+
+      pick('Deadline date', '2026-10-25')
+      pick('Deadline time', '08:00')
+      expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+    })
+
+    it("Edit shows the want's current deadline", async () => {
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { expiresAt: at(2026, 9, 30, 18, 0) }),
+      ])
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+
+      expect(screen.getByLabelText('Edit deadline')).toHaveDisplayValue('Pick a date')
+      expect(screen.getByLabelText('Edit deadline date')).toHaveValue('2026-10-30')
+      expect(screen.getByLabelText('Edit deadline time')).toHaveValue('18:00')
+    })
+
+    it('moving the deadline sends only the new one', async () => {
+      await editRamen(at(2026, 9, 30, 18, 0), () => pick('Edit deadline time', '20:00'))
+
+      expect(updateWant).toHaveBeenCalledWith(1, {
+        message: 'Ramen downtown',
+        category: 'FOOD',
+        expiresAt: at(2026, 9, 30, 20, 0),
+      })
+    })
+
+    it('removing the deadline sends noDeadline', async () => {
+      await editRamen(at(2026, 9, 30, 18, 0), () =>
+        userEvent.selectOptions(screen.getByLabelText('Edit deadline'), 'No deadline'),
+      )
+
+      expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'FOOD', noDeadline: true })
+    })
+
+    it('saving with the deadline unchanged sends no deadline', async () => {
+      // Seconds the picker can't show must not count as a change.
+      await editRamen(new Date(2026, 9, 30, 18, 0, 42).toISOString(), () => {})
+
+      expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'FOOD' })
+    })
+
+    it('an active want with a deadline shows when it closes', async () => {
+      const deadline = at(2026, 9, 30, 18, 0)
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { expiresAt: deadline }),
+        want(2, 'Dune Part Two', 'MOVIE', SAM),
+      ])
+      renderWants()
+      await screen.findByText('Dune Part Two')
+
+      const closes = within(row('Ramen downtown')).getByText(/Closes/)
+      expect(closes.querySelector('time')).toHaveAttribute('dateTime', deadline)
+      expect(within(row('Dune Part Two')).queryByText(/Closes/)).not.toBeInTheDocument()
+    })
+
+    it('a want whose deadline passed says "Closed at its deadline"', async () => {
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED', expiresAt: at(2026, 9, 25, 8, 0) }),
+        // Closed by hand with its deadline still ahead: just Closed.
+        want(2, 'Catan night', 'GAME', DANI, { status: 'CLOSED', expiresAt: at(2026, 9, 30, 18, 0) }),
+      ])
+      renderWants()
+      await screen.findByText('Catan night')
+
+      expect(within(row('Ramen downtown')).getByText('Closed at its deadline')).toBeInTheDocument()
+      expect(within(row('Catan night')).getByText('Closed')).toBeInTheDocument()
+      expect(within(row('Catan night')).queryByText('Closed at its deadline')).not.toBeInTheDocument()
+    })
+
+    it('a want past its deadline offers Reopen and not Edit', async () => {
+      // A deadline can't be moved on a closed want: it is reopened first.
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED', expiresAt: at(2026, 9, 25, 8, 0) }),
+      ])
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      expect(screen.getByRole('button', { name: 'Reopen' })).toBeEnabled()
+      expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+    })
+
+    it('Reopen without a new deadline sends no body', async () => {
+      // The API then keeps a deadline still ahead and clears one that passed.
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED', expiresAt: at(2026, 9, 30, 18, 0) }),
+      ])
+      vi.mocked(reopenWant).mockResolvedValue(want(1, 'Ramen downtown'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+      expect(screen.getByLabelText('Reopen deadline')).toHaveDisplayValue(/^Keep /)
+      await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+
+      expect(reopenWant).toHaveBeenCalledWith(1)
+    })
+
+    it('Reopen offers to keep a deadline still ahead', async () => {
+      // Without a new one the API keeps a deadline ahead and clears one that passed, so say which.
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED', expiresAt: at(2026, 9, 30, 18, 0) }),
+        want(2, 'Catan night', 'GAME', DANI, { status: 'CLOSED', expiresAt: at(2026, 9, 25, 8, 0) }),
+      ])
+      renderWants()
+      await screen.findByText('Catan night')
+
+      await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Reopen' }))
+      const keep = within(row('Ramen downtown')).getByLabelText('Reopen deadline')
+      expect(keep).toHaveDisplayValue(/^Keep .*30/)
+      await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Cancel' }))
+
+      await userEvent.click(within(row('Catan night')).getByRole('button', { name: 'Reopen' }))
+      expect(within(row('Catan night')).getByLabelText('Reopen deadline')).toHaveDisplayValue('No deadline')
+    })
+
+    it('Cancel in the Reopen step puts focus back on Reopen', async () => {
+      vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' })])
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+      // Not on Cancel want, which would sit where Cancel was.
+      expect(screen.getByRole('button', { name: 'Reopen' })).toHaveFocus()
+    })
+
+    it('Confirming Reopen puts focus on Edit', async () => {
+      vi.mocked(listWants).mockResolvedValueOnce([want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' })])
+      vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown')])
+      vi.mocked(reopenWant).mockResolvedValue(want(1, 'Ramen downtown'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+
+      // Not on Start, which would sit where Confirm was and acts without asking.
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Edit' })).toHaveFocus())
+    })
+
+    it('Escape closes the Reopen step', async () => {
+      vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' })])
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+      await userEvent.keyboard('{Escape}')
+
+      expect(screen.queryByLabelText('Reopen deadline')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Reopen' })).toHaveFocus()
+      expect(reopenWant).not.toHaveBeenCalled()
+    })
+
+    it('a missing or past date says why the button is disabled', async () => {
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await userEvent.selectOptions(screen.getByLabelText('Deadline'), 'Pick a date')
+
+      expect(screen.getByLabelText('Deadline date')).toHaveAccessibleDescription('Choose a date')
+
+      pick('Deadline date', '2026-10-24')
+      expect(screen.getByLabelText('Deadline date')).toHaveAccessibleDescription("Pick a time that hasn't passed")
+      expect(screen.getByLabelText('Deadline date')).toHaveAttribute('aria-invalid', 'true')
+
+      pick('Deadline date', '2026-10-30')
+      expect(screen.getByLabelText('Deadline date')).not.toHaveAccessibleDescription()
+      expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled()
+    })
+
+    it('a deadline that passes before Add says why instead of doing nothing', async () => {
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await userEvent.selectOptions(screen.getByLabelText('Deadline'), 'Pick a date')
+      pick('Deadline date', '2026-10-25')
+      pick('Deadline time', '10:00')
+
+      // Nothing re-renders as the clock passes 10:00, so Add is still enabled.
+      vi.setSystemTime(new Date(2026, 9, 25, 10, 30))
+      await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      expect(createWant).not.toHaveBeenCalled()
+      expect(screen.getByText("Pick a time that hasn't passed")).toBeInTheDocument()
+    })
+
+    it('a save refused because the want closed reloads the list and leaves edit mode', async () => {
+      // The deadline passed while the row was open: the API answers 409.
+      vi.mocked(listWants).mockResolvedValueOnce([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { expiresAt: at(2026, 9, 25, 9, 30) }),
+      ])
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED', expiresAt: at(2026, 9, 25, 9, 30) }),
+      ])
+      vi.mocked(updateWant).mockRejectedValue(new Error('409 Conflict'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+      vi.setSystemTime(new Date(2026, 9, 25, 9, 45))
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('409 Conflict')
+      await waitFor(() => expect(screen.queryByLabelText('Edit want')).not.toBeInTheDocument())
+      expect(within(row('Ramen downtown')).getByText('Closed at its deadline')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Reopen' })).toHaveFocus()
+    })
+
+    it('Reopen with a new deadline sends it', async () => {
+      vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED' })])
+      vi.mocked(reopenWant).mockResolvedValue(want(1, 'Ramen downtown'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+      await userEvent.selectOptions(screen.getByLabelText('Reopen deadline'), 'Tomorrow')
+      await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+
+      expect(reopenWant).toHaveBeenCalledWith(1, at(2026, 9, 26, 12, 0))
+    })
+
+    it('after reopening, a deadline still ahead shows the want active with that deadline', async () => {
+      const deadline = at(2026, 9, 30, 18, 0)
+      vi.mocked(listWants).mockResolvedValueOnce([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { status: 'CLOSED', expiresAt: deadline }),
+      ])
+      // The reload after reopening: the API kept the deadline, so the want is active again.
+      vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { expiresAt: deadline })])
+      vi.mocked(reopenWant).mockResolvedValue(want(1, 'Ramen downtown', 'FOOD', DANI, { expiresAt: deadline }))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+
+      expect(await within(row('Ramen downtown')).findByRole('button', { name: 'Edit' })).toBeEnabled()
+      expect(
+        within(row('Ramen downtown'))
+          .getByText(/Closes/)
+          .querySelector('time'),
+      ).toHaveAttribute('dateTime', deadline)
+      expect(within(row('Ramen downtown')).queryByText('Closed')).not.toBeInTheDocument()
+    })
   })
 })

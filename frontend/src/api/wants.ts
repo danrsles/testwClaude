@@ -33,9 +33,18 @@ export async function closeWant(id: number): Promise<Want> {
   return response.ok ? response.json() : fail(response)
 }
 
-/** Takes signups again. Owner only. Idempotent. */
-export async function reopenWant(id: number): Promise<Want> {
-  const response = await authFetch(`${BASE}/${id}/reopen`, { method: 'POST' })
+/**
+ * Takes signups again. Owner only. Idempotent. A new deadline must be in the
+ * future (400); without one, a deadline still ahead is kept and one that has
+ * passed is cleared.
+ */
+export async function reopenWant(id: number, expiresAt?: string): Promise<Want> {
+  const response = await authFetch(
+    `${BASE}/${id}/reopen`,
+    expiresAt === undefined
+      ? { method: 'POST' }
+      : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }) },
+  )
   return response.ok ? response.json() : fail(response)
 }
 

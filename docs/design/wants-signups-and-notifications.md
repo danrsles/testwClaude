@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); step 6's API (deadline and expiry) built, its screen next; steps 7 and 8 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); step 6 built (deadline and expiry, with its screen); steps 7 and 8 planned.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 
@@ -140,7 +140,8 @@ Each step is one PR and works without the ones after it.
 3. **Done. Close, reopen and cancel:** `closed_at`, `cancelled_at`, `status` in the responses, `WANT_CLOSED`, `WANT_REOPENED`, `WANT_CANCELLED`; delete becomes cancel. Reopen takes no deadline until step 6.
 4. **Done. Happening and ended:** `started_at`, `ended_at`, the `happening` flag and the `ENDED` status, `POST /wants/{id}/start` and `/end` under the same lock, `WANT_STARTED` and `WANT_ENDED`. The screen has Start and End buttons, "Happening now" and "Ended" labels, and texts for both notifications.
 5. **Done. Open invite:** a nullable `capacity` (null = no limit, never full), `openInvite` in the request both ways, `WANT_OPEN_INVITE` and `WANT_LIMITED`. The screen has an Open invite checkbox on Add and Edit, "N going" on open rows, and texts for both notifications.
-6. **Deadline and expiry job, API built:** `expires_at`, refused signups and edits after it, `WANT_DEADLINE_CHANGED` and `WANT_EXPIRED`, reopen with a new deadline, and the job. Next: the screen (a deadline picker, the deadline on each want, texts for both notifications).
+6. **Done. Deadline and expiry job:** `expires_at`, refused signups and edits after it, `WANT_DEADLINE_CHANGED` and `WANT_EXPIRED`, reopen with a new deadline, and the job. The screen has a deadline picker (presets or a date) on Add, Edit and Reopen, "Closes …" and "Closed at its deadline" on rows, and texts for both notifications.
+   - **Follow-up, not built: reload the list when a deadline passes.** The bell polls every 30 s, but the wants list reloads only after a change of yours, so a row keeps "Closes …" and Sign up after its deadline while the bell already shows `WANT_EXPIRED`. The API is right throughout (status is worked out on read); the screen just doesn't read again. Plan: one `setTimeout` in `useWants` (server state, so not in the component) for the soonest `expiresAt` still ahead in the list, plus a second's grace for clock skew, that calls `refresh()`, rescheduled after every load and cleared on change or unmount. A delay beyond `setTimeout`'s ~24.8-day cap waits that long and reschedules. One timer for the list, not one per want: a single `GET /wants` refreshes every row. Tests: `reloads the list when the soonest deadline passes`, `sets no timer when no want has a deadline ahead`. Polling the list on TanStack Query, or step 7, would also cover it, along with other people's changes.
 7. **Optional: live updates over SSE**, if polling is too slow.
 8. **Later: tell followers about new wants,** organised into groups, so people hear about wants they could join without opening the feed.
 

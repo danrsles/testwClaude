@@ -1,4 +1,8 @@
-/** What a notification is about. WANT_CREATED is sent to yourself, so its actor is you. */
+/**
+ * What a notification is about. WANT_CREATED is sent to yourself, so its actor
+ * is you. WANT_EXPIRED is sent by the clock, to the lineup and the owner, with
+ * the owner as its actor.
+ */
 export type NotificationType =
   | 'FOLLOW'
   | 'WANT_CREATED'
@@ -12,6 +16,8 @@ export type NotificationType =
   | 'WANT_ENDED'
   | 'WANT_OPEN_INVITE'
   | 'WANT_LIMITED'
+  | 'WANT_DEADLINE_CHANGED'
+  | 'WANT_EXPIRED'
 
 /** Someone who did something you are told about: public fields only. */
 export interface Actor {

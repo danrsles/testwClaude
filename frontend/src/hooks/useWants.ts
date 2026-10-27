@@ -16,6 +16,9 @@ import type { Category, Want } from '../types/wants'
 /** What an edit changes about the seats: a raised limit, or opening or limiting it. Never both, which the API refuses. */
 export type SeatsChange = { capacity: number } | { openInvite: boolean }
 
+/** What an edit changes about the deadline: a new one, or none at all. Never both, which the API refuses. */
+export type DeadlineChange = { expiresAt: string } | { noDeadline: true }
+
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : 'Request failed'
 }
@@ -26,12 +29,19 @@ export interface UseWants {
   error: string | null
   refresh: () => Promise<void>
   /** Each mutation resolves true on success, false if the API rejected it. */
-  /** A null capacity makes it an open invite, with no limit. */
-  add: (message: string, category: Category, capacity: number | null) => Promise<boolean>
-  /** Leaving the change out keeps the seats as they are. */
-  update: (id: number, message: string, category: Category, change?: SeatsChange) => Promise<boolean>
+  /** A null capacity makes it an open invite, with no limit. Without expiresAt there is no deadline. */
+  add: (message: string, category: Category, capacity: number | null, expiresAt?: string) => Promise<boolean>
+  /** Leaving a change out keeps the seats, or the deadline, as they are. */
+  update: (
+    id: number,
+    message: string,
+    category: Category,
+    change?: SeatsChange,
+    deadline?: DeadlineChange,
+  ) => Promise<boolean>
   close: (id: number) => Promise<boolean>
-  reopen: (id: number) => Promise<boolean>
+  /** Without expiresAt, the API keeps a deadline still ahead and clears one that has passed. */
+  reopen: (id: number, expiresAt?: string) => Promise<boolean>
   start: (id: number) => Promise<boolean>
   /** Final: an ended want can't be started again. */
   end: (id: number) => Promise<boolean>
@@ -90,6 +100,10 @@ export function useWants(filter: Category | ''): UseWants {
         await refresh()
         return true
       } catch (e) {
+        // Reload anyway: a refusal often means the want changed underneath
+        // the screen, such as its deadline passing, and the rows should say so.
+        // The error is set after, since a successful reload clears it.
+        await refresh()
         setError(messageOf(e))
         return false
       }
@@ -98,22 +112,32 @@ export function useWants(filter: Category | ''): UseWants {
   )
 
   const add = useCallback(
-    (message: string, category: Category, capacity: number | null) =>
+    (message: string, category: Category, capacity: number | null, expiresAt?: string) =>
       mutate(() =>
-        createWant(capacity === null ? { message, category, openInvite: true } : { message, category, capacity }),
+        createWant({
+          message,
+          category,
+          ...(capacity === null ? { openInvite: true } : { capacity }),
+          ...(expiresAt === undefined ? {} : { expiresAt }),
+        }),
       ),
     [mutate],
   )
 
   const update = useCallback(
-    (id: number, message: string, category: Category, change?: SeatsChange) =>
-      mutate(() => updateWant(id, { message, category, ...change })),
+    (id: number, message: string, category: Category, change?: SeatsChange, deadline?: DeadlineChange) =>
+      mutate(() => updateWant(id, { message, category, ...change, ...deadline })),
     [mutate],
   )
 
   const close = useCallback((id: number) => mutate(() => closeWant(id)), [mutate])
 
-  const reopen = useCallback((id: number) => mutate(() => reopenWant(id)), [mutate])
+  // No deadline means no body at all, rather than a body saying "none".
+  const reopen = useCallback(
+    (id: number, expiresAt?: string) =>
+      mutate(() => (expiresAt === undefined ? reopenWant(id) : reopenWant(id, expiresAt))),
+    [mutate],
+  )
 
   const start = useCallback((id: number) => mutate(() => startWant(id)), [mutate])
 
