@@ -3,6 +3,7 @@ package com.example.demo.controllers;
 import java.time.Instant;
 import java.util.List;
 
+import com.example.demo.dto.UserSummary;
 import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
 import com.example.demo.models.User;
@@ -84,7 +85,7 @@ class WantControllerTest {
 
     /** A want as the service returns it: just its owner seated, and dani is that owner. */
     private static WantResponse seated(Want want) {
-        return WantResponse.from(want, 1, true, NOW);
+        return WantResponse.from(want, List.of(UserSummary.from(want.getUser())), true, NOW);
     }
 
     private static RequestPostProcessor signedInAsDani() {
@@ -108,6 +109,12 @@ class WantControllerTest {
                 .andExpect(jsonPath("$[0].imageUrl").value("https://img.clerk.com/dani.jpg"))
                 .andExpect(jsonPath("$[0].capacity").value(1))
                 .andExpect(jsonPath("$[0].seatsTaken").value(1))
+                // Everyone seated, by public fields only, so the row can show their pictures.
+                .andExpect(jsonPath("$[0].lineup.length()").value(1))
+                .andExpect(jsonPath("$[0].lineup[0].id").value(1))
+                .andExpect(jsonPath("$[0].lineup[0].username").value("dani"))
+                .andExpect(jsonPath("$[0].lineup[0].imageUrl").value("https://img.clerk.com/dani.jpg"))
+                .andExpect(jsonPath("$[0].lineup[0].length()").value(3))
                 .andExpect(jsonPath("$[0].signedUp").value(true));
     }
 

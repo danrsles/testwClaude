@@ -275,6 +275,15 @@ export default function Wants() {
                 {want.capacity === null ? `${want.seatsTaken} going` : `${want.seatsTaken} / ${want.capacity} seats`}
               </span>
 
+              {/* Unlike the owner's, these pictures stand alone, so each is named by its alt text. */}
+              <ul aria-label={`Going to ${want.message}`} className="flex -space-x-1.5">
+                {want.lineup.map((person) => (
+                  <li key={person.id} title={person.username}>
+                    <Avatar src={person.imageUrl} alt={person.username} size={20} />
+                  </li>
+                ))}
+              </ul>
+
               {/* Wraps rather than spilling out of the card on narrow phones. */}
               <span className="ml-auto flex flex-wrap justify-end gap-1.5 whitespace-nowrap">
                 {/* Filled and borderless like the category tag, so they read as a status, not a button. */}

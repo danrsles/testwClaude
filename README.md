@@ -1,11 +1,121 @@
 # Wants
 
-A small full-stack app for tracking things you want to do, eat, play or visit. Each want has a message, one of four categories, and an owner.
+**A social planning app: post something you want to do, and the people who follow you take a seat.**
 
-- **Backend** — Spring Boot 3.5.6 on Java 21, PostgreSQL 18 (hosted on Aiven, or PostGIS in Docker locally), Flyway migrations
-- **Frontend** — React + TypeScript, Vite, React Router, Tailwind CSS v4
-- **Login** — [Clerk](https://clerk.com): it hosts sign-up and sign-in, and the API verifies Clerk's session token on every request
-- **Infrastructure** — the React app on S3 behind CloudFront (HTTPS), the API on one EC2 instance reachable only through CloudFront, all in Terraform; GitHub Actions tests both halves, publishes the API image and deploys the site
+"Pizza Friday, 4 seats." "Elden Ring co-op tonight, anyone." Friends follow each other and see each other's plans in one feed. Seats go first come, first served, and everyone in the lineup is notified as a plan fills up, changes, starts, ends or runs out of time.
+
+It is a full-stack app deployed on AWS. It was built one feature at a time from a written design doc, and every step went through a pull request, CI and tests.
+
+**Spring Boot 3.5 · Java 21 · PostgreSQL 18 · Flyway · React + TypeScript · Tailwind CSS v4 · TanStack Query · Clerk · Docker · Terraform · AWS (EC2, S3, CloudFront, SSM) · GitHub Actions · Testcontainers**
+
+- [What it does](#what-it-does)
+- [Engineering highlights](#engineering-highlights)
+- [Architecture](#architecture)
+- [How it is tested](#how-it-is-tested)
+- [How it was built](#how-it-was-built)
+- [Developer guide](#prerequisites): running it, the API, tests, schema, CI and deployment
+
+## What it does
+
+- **Wants.** A plan with a message and a category (food, movie, game or trip). It can have a seat limit or be an **open invite** with no limit, and it can have an optional **deadline**.
+- **Following.** Search people by username and follow them. Your feed shows your own wants plus those of everyone you follow, and nobody else's.
+- **Signups.** Take a seat or give it up. The owner always holds the first seat, and a full want refuses more people.
+- **A lifecycle.** The owner can **close** a want (the lineup is fixed), **reopen** it, **start** it ("happening now"), **end** it, or **cancel** it. When a deadline passes, the want closes on its own.
+- **Notifications.** 14 kinds, such as "sam took a seat", "dani moved the deadline" and "Pizza Friday has started". A bell shows the unread count.
+- **Accounts through Clerk.** Sign-in, username and profile picture all come from Clerk, and a changed picture shows in the app straight away.
+
+Every rule above is drawn as a decision tree in [How status and notifications are decided](#how-status-and-notifications-are-decided).
+
+## Engineering highlights
+
+These are the problems that took real design work. Each one names the code that solves it and the test that proves it.
+
+### 1. The last seat can't be taken twice
+
+When two people press **Sign up** for the last seat at the same moment, both requests count `seatsTaken < capacity`, both see a free seat, and both get in. [`SignupService`](src/main/java/com/example/demo/services/SignupService.java) prevents that by first locking the want's row (`SELECT ... FOR UPDATE`, [`WantRepository.findByIdForUpdate`](src/main/java/com/example/demo/repositories/WantRepository.java)). Only then does it count the seats and insert, so the second request waits, then counts the first one's committed seat.
+
+The tempting one-statement version, `INSERT ... SELECT ... WHERE count < capacity`, **does not work** in PostgreSQL. The wants row is never modified, so a waiting statement is never re-checked, and both inserts succeed. Every other change to a want takes the same lock.
+
+**Proof:** [`WantSignupsIT`](src/test/java/com/example/demo/services/WantSignupsIT.java) holds one signup's transaction open on a latch and shows the second is still blocked after 500 ms. It also sends five signups at once for one seat. Both tests fail every time if the lock is removed.
+
+### 2. A scheduled job that is safe to run twice, with no lock library
+
+Deadlines are enforced the moment they pass, not when a job gets round to them. `Want.getStatus(now)` treats a passed `expires_at` as `CLOSED`, so a signup or edit one second after the deadline is already refused.
+
+[`WantExpiryJob`](src/main/java/com/example/demo/services/WantExpiryJob.java) then runs every minute to record the closure and notify the lineup. That is **one SQL statement**: an `UPDATE ... RETURNING` inside a CTE feeding the `INSERT` into `notifications`, so the want closes and everyone is told atomically. Its `WHERE closed_at IS NULL AND ...` guard is the whole concurrency story. A second run, a second instance, or a request holding the row lock makes the `UPDATE` wait, re-check and skip. There is no ShedLock and no distributed lock.
+
+**Proof:** [`WantExpiryIT`](src/test/java/com/example/demo/services/WantExpiryIT.java) runs the job concurrently and repeatedly, and asserts exactly one `WANT_EXPIRED` per seat. It also checks catch-up after downtime and a want being reopened mid-run. Removing any part of the guard fails it.
+
+### 3. Doing anything twice changes nothing and notifies nobody twice
+
+Every action is idempotent, and every notification is sent exactly once:
+
+- Follows and first sign-ins use `INSERT ... ON CONFLICT DO NOTHING` and act on the returned row count. Catching a unique-constraint exception instead would mark the surrounding transaction rollback-only.
+- State changes check the status under the row lock, so closing a closed want is a no-op.
+- Each notification is written **in the same transaction** as the event it describes. If the notification fails, the event rolls back too.
+
+**Proof:** [`FollowNotificationsIT`](src/test/java/com/example/demo/services/FollowNotificationsIT.java) makes the notification fail on purpose with a spy and checks the follow is undone. [`WantLifecycleIT`](src/test/java/com/example/demo/services/WantLifecycleIT.java) checks that a repeated close notifies once.
+
+### 4. Security that fails closed
+
+- **Tokens are fully verified.** [`ClerkJwtConfig`](src/main/java/com/example/demo/security/ClerkJwtConfig.java) checks each Clerk JWT against Clerk's published keys: signature, expiry, an exact issuer match, and the authorized party (`azp`, [`AuthorizedPartyValidator`](src/main/java/com/example/demo/security/AuthorizedPartyValidator.java)). **Clerk's secret key is used nowhere.**
+- **Who you are comes only from the token.** No endpoint accepts a user id in the body or query string. Ownership is checked in the service layer: 404 for an unknown want, 403 for someone else's.
+- **Private data never leaks through another user's response.** Other users are only ever returned as response records that copy public fields (`WantResponse`, `UserSummary`, `PersonResult`), and a controller test guards each one.
+- **The API can't be reached around CloudFront.** The firewall admits only CloudFront's address ranges. Those ranges are shared by every CloudFront customer, so [`OriginSecretFilter`](src/main/java/com/example/demo/security/OriginSecretFilter.java) also requires a secret header, and it runs before Spring Security even looks at the token.
+- **Missing configuration stops the app.** A blank issuer, an empty party list, or an enabled origin check with no secret stops startup instead of quietly leaving the API open.
+
+### 5. Infrastructure as code, with no long-lived keys
+
+- **Terraform builds everything.** [`terraform/`](terraform/) creates the EC2 instance, a private S3 bucket and CloudFront, the IAM roles and the SSM parameters.
+- **CI holds no AWS keys.** GitHub Actions deploys through **OIDC**: each run gets short-lived credentials for a role that only this repository's `master` branch can assume.
+- **No SSH in deploys.** The API is redeployed through **SSM Run Command**, then health-checked ([`deploy/redeploy-api.sh`](deploy/redeploy-api.sh)).
+- **The database password is in neither the Terraform plan nor its state.** It is a write-only value from an ephemeral variable, stored only in SSM.
+- **Sized for the free database plan.** The connection pool fits Aiven's 20-connection limit, with room for a laptop and the admin console. Instances are replaced destroy-first, so two servers never compete for connections.
+
+### 6. A schema that can't drift
+
+Flyway owns the schema (16 migrations, never edited once applied), and Hibernate only *validates* it. Every database test starts a fresh PostgreSQL in Docker and migrates it from empty, so a broken migration fails CI, not production. Time comes from an injected `Clock`, so unit tests pin it with `Clock.fixed` instead of sleeping.
+
+## Architecture
+
+```
+Browser ──HTTPS──► CloudFront
+                    ├─ /*      → S3 (private)        React + TypeScript SPA
+                    └─ /api/*  → + secret header
+                                 → EC2: Spring Boot API in Docker (admits CloudFront only)
+                                     ├─ verifies Clerk JWTs (JWKS, issuer, azp)
+                                     ├─ expiry job, every minute
+                                     └──TLS (verify-full)──► Aiven PostgreSQL 18
+
+API layers:  controllers → services → repositories → PostgreSQL
+             (dto records in and out; identity from the token, never the request)
+Web layers:  components → hooks (TanStack Query / context) → api/ (one function per endpoint)
+```
+
+Each layer only calls the one below it. Controllers never touch repositories, and components never call `api/` directly. Notifications are rows in a table, written whether or not the recipient is online, and the browser polls every 30 seconds. The reasoning behind that and every other design choice is in [`docs/design/wants-signups-and-notifications.md`](docs/design/wants-signups-and-notifications.md).
+
+## How it is tested
+
+| Kind | Tools | What it covers |
+| --- | --- | --- |
+| API unit tests (`*Test`) | JUnit 5, `@WebMvcTest`, Mockito | each endpoint through the real security rules, plus service rules like ownership; no database or network |
+| Database tests (`*IT`) | Testcontainers (PostgreSQL + PostGIS) | real SQL and transactions: races for the last seat, the expiry job, rollbacks, migrations from empty |
+| Frontend tests | Vitest, React Testing Library | screens and hooks with the `api/` layer stubbed |
+| Static checks | `tsc`, oxlint, Prettier | types, lint and formatting |
+
+CI runs all of it on every pull request. A merge to `master` publishes the API image and deploys both halves.
+
+## How it was built
+
+- **Design first.** Signups and notifications were planned in a [design doc](docs/design/wants-signups-and-notifications.md) and built in six steps: notifications, capacity, close and cancel, start and end, open invites, and deadlines. Each step was its own pull request with its tests.
+- **AI-assisted, with every decision documented.** Development used [Claude Code](https://claude.com/claude-code) as a pair programmer. The project's [`CLAUDE.md`](CLAUDE.md) records the conventions and the reasons behind them. Custom review agents check UI and accessibility, system design and launch readiness, and pull requests get an automated review.
+- **Honest about limits.** What is deliberately missing is listed under [Known gaps](#known-gaps).
+
+**Next:** a deadline picker on the wants screen (the API side is done), then a UI redesign.
+
+---
+
+*Everything below is the developer guide.*
 
 ## Prerequisites
 
@@ -91,7 +201,7 @@ npm run dev             # http://localhost:5173
 The dev server proxies `/api/*` to port 8080, so the browser stays on one origin and the backend needs no CORS configuration.
 
 A signed-out visitor sees only Clerk's sign-in form, which also offers sign-up. Once signed in, the app has two screens, linked from the nav at the top: the wants list at `/` and an about page at `/info`. The header also holds Clerk's account menu, the only account control: it changes your profile picture, username and email, and signs you out.
-- **Wants** show each owner's username and Clerk profile picture: their photo, or Clerk's silhouette if they haven't set one.
+- **Wants** show each owner's username and Clerk profile picture: their photo, or Clerk's silhouette if they haven't set one. Beside the seat count, a row of small pictures shows everyone going, in the order they signed up.
 - **Each want is for a number of people**, set when you add it (1 unless you change it) and raised later with Edit; it can't be lowered. Every row shows its seats taken, such as "2 / 4 seats". Other people's wants have a **Sign up** button, which becomes **Withdraw** once you're in; when every seat is taken it is disabled and the row says "Full". Your own wants have neither, since you always hold a seat on them.
 - **An open invite has no seat limit.** Tick **Open invite** when you add a want, or later in Edit; its row then says how many are going, such as "5 going", carries an **Open invite** label, and is never full. Anyone who follows you can still join, as with any want, and the people already in are told it's open so they can bring others. Untick it in Edit to limit it to the people already in; raise the limit in a later edit.
 - **Notifications** say what happened in a sentence: "alex signed up for 'Pizza Friday'", "You created 'Pizza Friday'", "sam renamed 'Pizza Friday' to 'Pizza Saturday'", or "sam opened 'Pizza Friday' to everyone: bring who you like".
@@ -158,7 +268,7 @@ Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/wants` | — | `200` your wants and those of people you follow, each `{id, message, category, userId, username, imageUrl, capacity, seatsTaken, signedUp, status, happening, expiresAt}`; cancelled wants are left out, ended ones stay | `400` unknown `?category=` |
+| `GET` | `/wants` | — | `200` your wants and those of people you follow, each `{id, message, category, userId, username, imageUrl, capacity, seatsTaken, lineup, signedUp, status, happening, expiresAt}`, `lineup` being everyone seated as `{id, username, imageUrl}`, the owner first; cancelled wants are left out, ended ones stay | `400` unknown `?category=` |
 | `GET` | `/wants?category=FOOD` | — | `200` filtered list | `400` unknown or lowercase value |
 | `POST` | `/wants` | `{message, category, capacity?, openInvite?, expiresAt?}` | `201` created want, owned by you, with you in its first seat; `openInvite: true` gives it no seat limit; `expiresAt` is its deadline | `400` invalid body, `capacity` below 1, `capacity` with `openInvite`, or `expiresAt` in the past |
 | `PUT` | `/wants/{id}` | `{message, category, capacity?, openInvite?, expiresAt?, noDeadline?}` | `200` updated want; leaving out `capacity` or `expiresAt` keeps it; `openInvite: true` removes the limit, `false` limits an open want to the people already in; `expiresAt` sets or moves the deadline, `noDeadline: true` removes it | `400` invalid body, capacity lowered, a capacity for an open want, `capacity` with `openInvite`, `expiresAt` in the past, or `expiresAt` with `noDeadline`; `403` not yours, `404` unknown want, `409` closed (its deadline passed included), ended or cancelled |
@@ -300,7 +410,7 @@ An **open invite** has no seat limit: its `capacity` is `null`, it is never full
 
 On a closed, ended or cancelled want, both answer `409` to everyone who can see it, even someone already in the lineup, since the screen offers neither button there. Anyone who can't see it gets `404`, so the `409` never gives away that it exists. A cancelled want can only be seen by its lineup.
 
-`lineup` lists usernames only, in the order people signed up, the owner first. If two people go for the last seat at the same moment, exactly one gets it: each signup locks the want's row in the database before counting the seats, so the second waits for the first and then finds the want full.
+`lineup` lists each person as `{id, username, imageUrl}`, public fields only, in the order people signed up, the owner first, so whoever just joined gets their own picture back with it. If two people go for the last seat at the same moment, exactly one gets it: each signup locks the want's row in the database before counting the seats, so the second waits for the first and then finds the want full.
 
 ```bash
 curl -X POST   -H "Authorization: Bearer $TOKEN" localhost:8080/wants/7/signups
@@ -577,6 +687,7 @@ These are deliberate omissions, not oversights:
 - **Pictures live in Clerk.** The app stores only each picture's URL, so moving off Clerk would mean moving everyone's picture too. Other people see a changed picture the next time they load the list; nothing in the app updates live.
 - **Notifications are polled, not pushed.** A new one can take up to 30 seconds to show, and nothing reaches you while the app is closed: no browser or phone notifications. The table works unchanged under either; see the design doc.
 - **Other users go out as response types only.** `GET /wants` returns `WantResponse`, which names the owner only by `userId`, `username` and `imageUrl`, `GET /follows` returns `UserSummary`, with the same three fields, `GET /users?q=` returns `PersonResult`, which adds only whether you follow them, and `GET /notifications` names each actor by `UserSummary`. `/me` still returns the `User` entity, which is fine only because it is always your own. Any future endpoint listing other users should return `UserSummary` or its own response type.
+- **Sample data is seeded everywhere.** `V2` and `V10` insert the users `dani`, `alex`, `sam` and `jordan` and their wants into every database Flyway touches, the hosted one included, so a fresh install has something to look at. Delete them before real users arrive.
 - **State in Terraform is local.** `terraform.tfstate` is git-ignored and holds the infrastructure's details in cleartext, including the CloudFront origin secret. The database password is write-only and not stored in it. A team would move it to an encrypted S3 backend with locking.
 
 ## Files that must never be committed

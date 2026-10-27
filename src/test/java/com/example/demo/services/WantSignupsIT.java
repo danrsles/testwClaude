@@ -14,6 +14,7 @@ import java.util.concurrent.TimeoutException;
 
 import com.example.demo.TestcontainersConfiguration;
 import com.example.demo.dto.SignupEventDetails;
+import com.example.demo.dto.UserSummary;
 import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
 import com.example.demo.models.Notification;
@@ -136,6 +137,28 @@ class WantSignupsIT {
                 .contains(tuple(pizza, 2, true), tuple(tacos, 1, true));
     }
 
+    /** Each row of the feed carries its lineup, pictures included, so the screen can show who is going. */
+    @Test
+    void theFeedShowsEachWantsLineupWithPictures() {
+        ClerkIdentity dani = person("dani");
+        String picture = "https://img.clerk.com/alex.png";
+        ClerkIdentity alex = new ClerkIdentity("user_alex_" + UUID.randomUUID().toString().substring(0, 8),
+                "alex_" + UUID.randomUUID().toString().substring(0, 8), null, null, picture);
+        followService.follow(idOf(dani), alex);
+        Long pizza = want(dani, "Pizza Friday", 4);
+        Long tacos = want(dani, "Tacos", 2);
+        signupService.signUp(pizza, alex);
+
+        List<WantResponse> feed = wantService.findAll(alex);
+
+        WantResponse pizzaRow = feed.stream().filter(w -> w.id().equals(pizza)).findFirst().orElseThrow();
+        WantResponse tacosRow = feed.stream().filter(w -> w.id().equals(tacos)).findFirst().orElseThrow();
+        assertThat(pizzaRow.lineup())
+                .extracting(UserSummary::id, UserSummary::username, UserSummary::imageUrl)
+                .containsExactly(tuple(idOf(dani), dani.username(), null), tuple(idOf(alex), alex.username(), picture));
+        assertThat(tacosRow.lineup()).extracting(UserSummary::id).containsExactly(idOf(dani));
+    }
+
     @Test
     void creatingAWantNotifiesOnlyTheOwnerThatItWasCreated() {
         ClerkIdentity dani = person("dani");
@@ -164,14 +187,31 @@ class WantSignupsIT {
         assertThat(joined.seatsTaken()).isEqualTo(2);
         assertThat(joined.capacity()).isEqualTo(4);
         assertThat(joined.message()).isEqualTo("Pizza Friday");
-        assertThat(joined.lineup()).containsExactly(dani.username(), alex.username());
+        assertThat(joined.lineup()).extracting(UserSummary::username).containsExactly(dani.username(), alex.username());
 
         SignupEventDetails left = signupService.withdraw(pizza, alex);
 
         assertThat(left.signedUp()).isFalse();
         assertThat(left.seatsTaken()).isEqualTo(1);
-        assertThat(left.lineup()).containsExactly(dani.username());
+        assertThat(left.lineup()).extracting(UserSummary::username).containsExactly(dani.username());
         assertThat(seats(pizza)).isEqualTo(1);
+    }
+
+    /** The lineup carries each person's picture, so whoever joins sees theirs at once. */
+    @Test
+    void theLineupShowsEachPersonsPicture() {
+        ClerkIdentity dani = person("dani");
+        String picture = "https://img.clerk.com/alex.png";
+        ClerkIdentity alex = new ClerkIdentity("user_alex_" + UUID.randomUUID().toString().substring(0, 8),
+                "alex_" + UUID.randomUUID().toString().substring(0, 8), null, null, picture);
+        followService.follow(idOf(dani), alex);
+        Long pizza = want(dani, "Pizza Friday", 4);
+
+        SignupEventDetails joined = signupService.signUp(pizza, alex);
+
+        assertThat(joined.lineup()).extracting(UserSummary::id).containsExactly(idOf(dani), idOf(alex));
+        // dani came from a token without the picture claim, so has none yet.
+        assertThat(joined.lineup()).extracting(UserSummary::imageUrl).containsExactly(null, picture);
     }
 
     @Test
@@ -289,7 +329,7 @@ class WantSignupsIT {
 
         assertThat(again.signedUp()).isTrue();
         assertThat(owner.signedUp()).isTrue();
-        assertThat(owner.lineup()).containsExactly(dani.username(), alex.username());
+        assertThat(owner.lineup()).extracting(UserSummary::username).containsExactly(dani.username(), alex.username());
         assertThat(seats(pizza)).isEqualTo(2);
         assertThat(ofType(dani, NotificationType.WANT_SIGNUP)).hasSize(1);
     }
@@ -319,7 +359,7 @@ class WantSignupsIT {
         signupService.withdraw(pizza, alex);
         SignupEventDetails samIn = signupService.signUp(pizza, sam);
 
-        assertThat(samIn.lineup()).containsExactly(dani.username(), sam.username());
+        assertThat(samIn.lineup()).extracting(UserSummary::username).containsExactly(dani.username(), sam.username());
     }
 
     @Test

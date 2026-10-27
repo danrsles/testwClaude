@@ -2,8 +2,8 @@ package com.example.demo.repositories;
 
 import java.util.Collection;
 import java.util.List;
-import java.util.Set;
 
+import com.example.demo.dto.UserSummary;
 import com.example.demo.models.WantSignup;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -22,17 +22,18 @@ public interface WantSignupRepository extends JpaRepository<WantSignup, Long> {
 
     long countByWantId(Long wantId);
 
-    /** Seats taken on each of several wants, as [wantId, count] pairs: one query for a whole feed. */
-    @Query("select s.want.id, count(s) from WantSignup s where s.want.id in :wantIds group by s.want.id")
-    List<Object[]> countSeats(@Param("wantIds") Collection<Long> wantIds);
+    /**
+     * The lineups of several wants, as [wantId, userId, username, imageUrl]
+     * rows in signup order: one query for a whole feed, never one per want.
+     */
+    @Query("select s.want.id, s.user.id, s.user.username, s.user.imageUrl "
+            + "from WantSignup s where s.want.id in :wantIds order by s.id")
+    List<Object[]> findLineups(@Param("wantIds") Collection<Long> wantIds);
 
-    /** Which of several wants a user holds a seat on. */
-    @Query("select s.want.id from WantSignup s where s.user.id = :userId and s.want.id in :wantIds")
-    Set<Long> findSignedUpWantIds(@Param("userId") Long userId, @Param("wantIds") Collection<Long> wantIds);
-
-    /** The lineup by username only, in the order people signed up; the owner is first. */
-    @Query("select s.user.username from WantSignup s where s.want.id = :wantId order by s.id")
-    List<String> findLineupUsernames(@Param("wantId") Long wantId);
+    /** The lineup by public fields only, in the order people signed up; the owner is first. */
+    @Query("select new com.example.demo.dto.UserSummary(s.user.id, s.user.username, s.user.imageUrl) "
+            + "from WantSignup s where s.want.id = :wantId order by s.id")
+    List<UserSummary> findLineup(@Param("wantId") Long wantId);
 
     /**
      * Takes a seat unless already holding one. ON CONFLICT makes a repeat a
