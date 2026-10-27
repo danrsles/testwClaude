@@ -2,12 +2,13 @@ package com.example.demo.services;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
+import com.example.demo.dto.UserSummary;
 import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
 import com.example.demo.models.NotificationType;
@@ -283,25 +284,27 @@ public class WantService {
 
     /** One want as `me` sees it. */
     private WantResponse withSeats(Want want, User me) {
-        return WantResponse.from(want, (int) wantSignupRepository.countByWantId(want.getId()),
-                wantSignupRepository.existsByWantIdAndUserId(want.getId(), me.getId()), clock.instant());
+        return withSeats(List.of(want), me).getFirst();
     }
 
-    /** A list of wants as `me` sees them, in two queries however long the list. */
+    /** A list of wants as `me` sees them, in one query for the lineups however long the list. */
     private List<WantResponse> withSeats(List<Want> wants, User me) {
         if (wants.isEmpty()) {
             return List.of();
         }
         List<Long> ids = wants.stream().map(Want::getId).toList();
-        Map<Long, Integer> seats = new HashMap<>();
-        for (Object[] row : wantSignupRepository.countSeats(ids)) {
-            seats.put((Long) row[0], ((Long) row[1]).intValue());
+        Map<Long, List<UserSummary>> lineups = new HashMap<>();
+        for (Object[] row : wantSignupRepository.findLineups(ids)) {
+            lineups.computeIfAbsent((Long) row[0], id -> new ArrayList<>())
+                    .add(new UserSummary((Long) row[1], (String) row[2], (String) row[3]));
         }
-        Set<Long> mine = wantSignupRepository.findSignedUpWantIds(me.getId(), ids);
         Instant now = clock.instant();
         return wants.stream()
-                .map(want -> WantResponse.from(want, seats.getOrDefault(want.getId(), 0), mine.contains(want.getId()),
-                        now))
+                .map(want -> {
+                    List<UserSummary> lineup = lineups.getOrDefault(want.getId(), List.of());
+                    boolean signedUp = lineup.stream().anyMatch(person -> person.id().equals(me.getId()));
+                    return WantResponse.from(want, lineup, signedUp, now);
+                })
                 .toList();
     }
 

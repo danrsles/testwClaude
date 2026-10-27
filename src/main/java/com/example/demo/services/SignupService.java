@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.util.List;
 
 import com.example.demo.dto.SignupEventDetails;
+import com.example.demo.dto.UserSummary;
 import com.example.demo.models.NotificationType;
 import com.example.demo.models.User;
 import com.example.demo.models.Want;
@@ -124,8 +125,9 @@ public class SignupService {
     }
 
     private SignupEventDetails details(Want want, User me) {
-        List<String> lineup = wantSignupRepository.findLineupUsernames(want.getId());
+        List<UserSummary> lineup = wantSignupRepository.findLineup(want.getId());
+        boolean signedUp = lineup.stream().anyMatch(person -> person.id().equals(me.getId()));
         return new SignupEventDetails(want.getId(), want.getMessage(), want.getCapacity(), lineup.size(), lineup,
-                lineup.contains(me.getUsername()), want.getStatus(clock.instant()));
+                signedUp, want.getStatus(clock.instant()));
     }
 }

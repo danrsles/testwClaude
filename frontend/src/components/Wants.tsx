@@ -348,6 +348,15 @@ export default function Wants() {
                 {want.capacity === null ? `${want.seatsTaken} going` : `${want.seatsTaken} / ${want.capacity} seats`}
               </span>
 
+              {/* Unlike the owner's, these pictures stand alone, so each is named by its alt text. */}
+              <ul aria-label={`Going to ${want.message}`} className="flex -space-x-1.5">
+                {want.lineup.map((person) => (
+                  <li key={person.id} title={person.username}>
+                    <Avatar src={person.imageUrl} alt={person.username} size={20} />
+                  </li>
+                ))}
+              </ul>
+
               {/* Only while people can join; once closed, the pill below says why. */}
               {want.expiresAt !== null && want.status !== 'CLOSED' && want.status !== 'ENDED' && (
                 <span className="text-sm text-stone-500 dark:text-stone-400">

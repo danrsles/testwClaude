@@ -28,6 +28,14 @@ export interface User {
   imageUrl: string | null
 }
 
+/** Someone in a want's lineup: public fields only. */
+export interface LineupMember {
+  id: number
+  username: string
+  /** Clerk profile picture; null for users Clerk has told us nothing about. */
+  imageUrl: string | null
+}
+
 /**
  * Everyone's wants are visible to every signed-in user, so the owner comes as
  * just an id, a username and a picture, never a whole User.
@@ -44,6 +52,8 @@ export interface Want {
   capacity: number | null
   /** Seats taken, counting the owner. Full when seatsTaken >= capacity; an open invite never is. */
   seatsTaken: number
+  /** Everyone holding a seat, the owner first, in signup order. Its length is seatsTaken. */
+  lineup: LineupMember[]
   /** Whether you hold a seat; always true on your own wants. */
   signedUp: boolean
   status: WantStatus
@@ -78,8 +88,8 @@ export interface SignupEventDetails {
   /** Null for an open invite. */
   capacity: number | null
   seatsTaken: number
-  /** Usernames only, the owner included. */
-  lineup: string[]
+  /** In signup order, the owner first. */
+  lineup: LineupMember[]
   signedUp: boolean
   status: WantStatus
 }

@@ -66,7 +66,9 @@ function want(
   message: string,
   category: Category = 'FOOD',
   owner = DANI,
-  seats: Partial<Pick<Want, 'capacity' | 'seatsTaken' | 'signedUp' | 'status' | 'happening' | 'expiresAt'>> = {},
+  seats: Partial<
+    Pick<Want, 'capacity' | 'seatsTaken' | 'lineup' | 'signedUp' | 'status' | 'happening' | 'expiresAt'>
+  > = {},
 ): Want {
   return {
     id,
@@ -77,6 +79,7 @@ function want(
     imageUrl: owner.imageUrl,
     capacity: 1,
     seatsTaken: 1,
+    lineup: [{ id: owner.id, username: owner.username, imageUrl: owner.imageUrl }],
     signedUp: owner === DANI,
     status: 'ACTIVE',
     happening: false,
@@ -458,6 +461,27 @@ describe('Wants', () => {
     expect(pictures.map((img) => img.getAttribute('src'))).toEqual([placeholder, 'https://img.clerk.com/sam.jpg'])
   })
 
+  it('shows the picture of everyone going, in signup order, named by its alt text', async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(2, 'Dune Part Two', 'MOVIE', SAM, {
+        capacity: 4,
+        seatsTaken: 2,
+        signedUp: true,
+        lineup: [
+          { id: SAM.id, username: SAM.username, imageUrl: SAM.imageUrl },
+          { id: DANI.id, username: DANI.username, imageUrl: null },
+        ],
+      }),
+    ])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    const going = within(screen.getByRole('list', { name: 'Going to Dune Part Two' })).getAllByRole('img')
+    expect(going.map((img) => img.getAttribute('alt'))).toEqual(['sam', 'dani'])
+    // dani has no picture, so gets the placeholder, still named.
+    expect(going.map((img) => img.getAttribute('src'))).toEqual(['https://img.clerk.com/sam.jpg', placeholder])
+  })
+
   it('creates a want with the capacity entered', async () => {
     vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos', 'FOOD', DANI, { capacity: 4 }))
     renderWants()
@@ -545,7 +569,10 @@ describe('Wants', () => {
       message: 'Dune Part Two',
       capacity: 4,
       seatsTaken: 2,
-      lineup: ['sam', 'dani'],
+      lineup: [
+        { id: SAM.id, username: SAM.username, imageUrl: null },
+        { id: DANI.id, username: DANI.username, imageUrl: null },
+      ],
       signedUp: true,
       status: 'ACTIVE',
     })
@@ -578,7 +605,7 @@ describe('Wants', () => {
       message: 'Dune Part Two',
       capacity: 4,
       seatsTaken: 1,
-      lineup: ['sam'],
+      lineup: [{ id: SAM.id, username: SAM.username, imageUrl: null }],
       signedUp: false,
       status: 'ACTIVE',
     })

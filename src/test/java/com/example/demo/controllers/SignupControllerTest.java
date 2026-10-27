@@ -3,6 +3,7 @@ package com.example.demo.controllers;
 import java.util.List;
 
 import com.example.demo.dto.SignupEventDetails;
+import com.example.demo.dto.UserSummary;
 import com.example.demo.models.WantStatus;
 import com.example.demo.security.SecurityConfig;
 import com.example.demo.services.ClerkIdentity;
@@ -38,6 +39,10 @@ class SignupControllerTest {
 
     private static final ClerkIdentity ALEX = new ClerkIdentity("user_alex", "alex");
 
+    private static final UserSummary DANI = new UserSummary(1L, "dani", null);
+
+    private static final UserSummary ALEX_SUMMARY = new UserSummary(2L, "alex", "https://img.clerk.com/alex.png");
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -54,7 +59,7 @@ class SignupControllerTest {
     @Test
     void signingUpReturnsTheEventDetails() throws Exception {
         given(signupService.signUp(7L, ALEX)).willReturn(
-                new SignupEventDetails(7L, "Pizza Friday", 4, 2, List.of("dani", "alex"), true, WantStatus.ACTIVE));
+                new SignupEventDetails(7L, "Pizza Friday", 4, 2, List.of(DANI, ALEX_SUMMARY), true, WantStatus.ACTIVE));
 
         mockMvc.perform(post("/wants/7/signups").with(signedInAsAlex()))
                 .andExpect(status().isOk())
@@ -66,22 +71,26 @@ class SignupControllerTest {
     }
 
     @Test
-    void signupDetailsShowTheLineupByUsernameOnly() throws Exception {
+    void signupDetailsShowTheLineupByPublicDetailsOnly() throws Exception {
         given(signupService.signUp(7L, ALEX)).willReturn(
-                new SignupEventDetails(7L, "Pizza Friday", 4, 2, List.of("dani", "alex"), true, WantStatus.ACTIVE));
+                new SignupEventDetails(7L, "Pizza Friday", 4, 2, List.of(DANI, ALEX_SUMMARY), true, WantStatus.ACTIVE));
 
-        // Plain names: no ids, emails or Clerk ids of the others in the lineup.
+        // Id, name and picture, so the person who joined sees their own picture; no emails or Clerk ids.
         mockMvc.perform(post("/wants/7/signups").with(signedInAsAlex()))
                 .andExpect(jsonPath("$.lineup.length()").value(2))
-                .andExpect(jsonPath("$.lineup[0]").value("dani"))
-                .andExpect(jsonPath("$.lineup[1]").value("alex"))
+                .andExpect(jsonPath("$.lineup[0].username").value("dani"))
+                .andExpect(jsonPath("$.lineup[0].imageUrl").isEmpty())
+                .andExpect(jsonPath("$.lineup[1].id").value(2))
+                .andExpect(jsonPath("$.lineup[1].username").value("alex"))
+                .andExpect(jsonPath("$.lineup[1].imageUrl").value("https://img.clerk.com/alex.png"))
+                .andExpect(jsonPath("$.lineup[1].length()").value(3))
                 .andExpect(content().string(not(containsString("user_"))));
     }
 
     @Test
     void withdrawingReturnsTheEventDetails() throws Exception {
         given(signupService.withdraw(7L, ALEX)).willReturn(
-                new SignupEventDetails(7L, "Pizza Friday", 4, 1, List.of("dani"), false, WantStatus.ACTIVE));
+                new SignupEventDetails(7L, "Pizza Friday", 4, 1, List.of(DANI), false, WantStatus.ACTIVE));
 
         mockMvc.perform(delete("/wants/7/signups").with(signedInAsAlex()))
                 .andExpect(status().isOk())
