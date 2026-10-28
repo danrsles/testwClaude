@@ -171,8 +171,8 @@ class WantSignupsIT {
         assertThat(created.getFirst().getActor().getId()).isEqualTo(idOf(dani));
         assertThat(created.getFirst().getWantId()).isEqualTo(pizza);
         assertThat(created.getFirst().getWantMessage()).isEqualTo("Pizza Friday");
-        // Followers are not told about new wants, for now.
-        assertThat(notificationService.mine(alex)).isEmpty();
+        // Followers hear of it as WANT_POSTED instead; see WantAnnounceIT.
+        assertThat(ofType(alex, NotificationType.WANT_CREATED)).isEmpty();
     }
 
     @Test

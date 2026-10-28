@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); step 6 built (deadline and expiry, with its screen); step 7 optional; step 8 designed (announcing new wants, and circles), not built.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); step 6 built (deadline and expiry, with its screen); step 7 optional; step 8 designed (announcing new wants, and circles), with 8a built (announcing to all followers).** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 
@@ -187,7 +187,7 @@ Each step is one PR and works without the ones after it.
    - **Follow-up, not built: reload the list when a deadline passes.** The bell polls every 30 s, but the wants list reloads only after a change of yours, so a row keeps "Closes …" and Sign up after its deadline while the bell already shows `WANT_EXPIRED`. The API is right throughout (status is worked out on read); the screen just doesn't read again. Plan: one `setTimeout` in `useWants` (server state, so not in the component) for the soonest `expiresAt` still ahead in the list, plus a second's grace for clock skew, that calls `refresh()`, rescheduled after every load and cleared on change or unmount. A delay beyond `setTimeout`'s ~24.8-day cap waits that long and reschedules. One timer for the list, not one per want: a single `GET /wants` refreshes every row. Tests: `reloads the list when the soonest deadline passes`, `sets no timer when no want has a deadline ahead`. Polling the list on TanStack Query, or step 7, would also cover it, along with other people's changes.
 7. **Optional: live updates over SSE**, if polling is too slow.
 8. **Designed, not built: tell followers about new wants, with circles,** so people hear about wants they could join without opening the feed. In five PRs, each working without the next:
-   1. **8a, announce to all followers:** `WANT_POSTED`, the `notifications_posted_once` index, an index on `follows (followee_id)`, and the notification's text on the screen.
+   1. **Done. 8a, announce to all followers:** `WANT_POSTED`, the `notifications_posted_once` index, an index on `follows (followee_id)`, and the notification's text on the screen.
    2. **8b, mute:** `follows.notify_new_wants` and `PUT` / `DELETE /follows/{userId}/notify`, with a toggle on the People screen.
    3. **8c, circles, not yet used by any want:** the tables, the `/circles` and `/followers` routes, and a `/circles` screen.
    4. **8d, circles decide who sees a want:** `wants.circle_id`, `circleId` and `allFollowers` on create and edit, with the feed, signups and announcing changed in the same PR.

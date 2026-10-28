@@ -30,6 +30,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 
 /** The ownership and capacity rules, which the controller tests mock away. */
 @ExtendWith(MockitoExtension.class)
@@ -182,7 +183,7 @@ class WantServiceTest {
         wantService.update(1L, "Pizza", Category.FOOD, null, false, null, null, DANI);
 
         assertThat(want.getCapacity()).isEqualTo(3);
-        then(notificationService).shouldHaveNoInteractions();
+        then(notificationService).should(never()).notifyLineup(any(), any(), any(), any());
     }
 
     @Test
@@ -350,7 +351,8 @@ class WantServiceTest {
         wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, NOW.plusSeconds(7200), null, DANI);
 
         then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_DEADLINE_CHANGED, null);
-        then(notificationService).shouldHaveNoMoreInteractions();
+        // The only lineup notification; followers may still be told about it (WANT_POSTED).
+        then(notificationService).should(times(1)).notifyLineup(any(), any(), any(), any());
     }
 
     @Test
@@ -362,7 +364,8 @@ class WantServiceTest {
         wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, NOW.plusSeconds(3600), null, DANI);
 
         then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_DEADLINE_CHANGED, null);
-        then(notificationService).shouldHaveNoMoreInteractions();
+        // The only lineup notification; followers may still be told about it (WANT_POSTED).
+        then(notificationService).should(times(1)).notifyLineup(any(), any(), any(), any());
     }
 
     @Test
@@ -373,7 +376,8 @@ class WantServiceTest {
         wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, null, true, DANI);
 
         then(notificationService).should().notifyLineup(1L, dani, NotificationType.WANT_DEADLINE_CHANGED, null);
-        then(notificationService).shouldHaveNoMoreInteractions();
+        // The only lineup notification; followers may still be told about it (WANT_POSTED).
+        then(notificationService).should(times(1)).notifyLineup(any(), any(), any(), any());
     }
 
     @Test
@@ -383,7 +387,7 @@ class WantServiceTest {
 
         wantService.update(1L, "Pizza Friday", Category.FOOD, null, null, NOW.plusSeconds(3600), null, DANI);
 
-        then(notificationService).shouldHaveNoInteractions();
+        then(notificationService).should(never()).notifyLineup(any(), any(), any(), any());
     }
 
     @Test
@@ -420,5 +424,66 @@ class WantServiceTest {
         assertThat(want.getExpiresAt()).isEqualTo(NOW.plusSeconds(86_400));
         assertThat(reopened.status()).isEqualTo(WantStatus.ACTIVE);
         assertThat(reopened.expiresAt()).isEqualTo(NOW.plusSeconds(86_400));
+    }
+
+    /** As save does, giving the new want its id. */
+    private static Want savedAs(Want want, Long id) {
+        ReflectionTestUtils.setField(want, "id", id);
+        return want;
+    }
+
+    @Test
+    void createAnnouncesAWantWithAFreeSeat() {
+        given(userService.current(DANI)).willReturn(dani);
+        given(wantRepository.save(any(Want.class))).willAnswer(call -> savedAs(call.getArgument(0), 7L));
+
+        wantService.create("Pizza", Category.FOOD, 4, null, DANI);
+
+        then(notificationService).should().announce(7L, dani);
+    }
+
+    @Test
+    void createAnnouncesAnOpenInvite() {
+        given(userService.current(DANI)).willReturn(dani);
+        given(wantRepository.save(any(Want.class))).willAnswer(call -> savedAs(call.getArgument(0), 7L));
+
+        wantService.create("Pizza", Category.FOOD, null, null, DANI);
+
+        then(notificationService).should().announce(7L, dani);
+    }
+
+    @Test
+    void createDoesNotAnnounceAWantForOneSeat() {
+        // The owner already holds it, so there is nothing to join.
+        given(userService.current(DANI)).willReturn(dani);
+        given(wantRepository.save(any(Want.class))).willAnswer(call -> savedAs(call.getArgument(0), 7L));
+
+        wantService.create("Pizza", Category.FOOD, 1, null, DANI);
+
+        then(notificationService).should(never()).announce(any(), any());
+    }
+
+    @Test
+    void updateAnnouncesAWantThatBecameJoinable() {
+        Want want = new Want("Pizza", Category.FOOD, dani, 1);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+        given(wantSignupRepository.countByWantId(1L)).willReturn(1L);
+
+        wantService.update(1L, "Pizza", Category.FOOD, 3, null, null, null, DANI);
+
+        then(notificationService).should().announce(1L, dani);
+    }
+
+    @Test
+    void updateDoesNotAnnounceAFullWant() {
+        Want want = new Want("Pizza", Category.FOOD, dani, 2);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+        given(wantSignupRepository.countByWantId(1L)).willReturn(2L);
+
+        wantService.update(1L, "Pizza night", Category.FOOD, null, null, null, null, DANI);
+
+        then(notificationService).should(never()).announce(any(), any());
     }
 }

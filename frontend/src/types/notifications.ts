@@ -18,6 +18,7 @@ export type NotificationType =
   | 'WANT_LIMITED'
   | 'WANT_DEADLINE_CHANGED'
   | 'WANT_EXPIRED'
+  | 'WANT_POSTED'
 
 /** Someone who did something you are told about: public fields only. */
 export interface Actor {
