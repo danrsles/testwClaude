@@ -64,7 +64,14 @@ If merging needs a specific method (see step 6), say so at the top of the body.
   - `squash` by default: one tidy commit on master.
   - `merge` (a merge commit) when the commits must survive with their ids: anything named in `.git-blame-ignore-revs`, or separate commits that are meant to be read one by one. Squash and rebase both rewrite ids.
   - An argument from the user wins over this choice.
-- `gh pr merge <n> --squash|--merge --delete-branch`. Never `--admin`; never bypass the ruleset.
+- **Two rulesets guard master.** *Checks* binds everyone: a PR, both checks green, the branch up to date with master, no force-push. *Review* adds one approval, and the Admin role may bypass it when merging a PR. The owner is the only Admin; collaborators have Write.
+- **Before merging,** `gh pr view <n> --json author,mergeable,mergeStateStatus,reviewDecision`, and compare `author.login` with `gh api user -q .login`.
+  - `mergeable` is `CONFLICTING`: master moved and touched the same lines. Merge `origin/master` into the branch (never rebase, which would need a force-push), resolve keeping both sides' intent, rerun step 3's checks, push, and go back to watching CI.
+  - `mergeStateStatus` is `BEHIND`: `gh pr update-branch <n>`, then watch CI again; the up-to-date rule wants green checks on the combined code.
+  - `CLEAN`: merge normally.
+  - `BLOCKED` with `reviewDecision` `REVIEW_REQUIRED`: use `--admin` **only if all of these hold**: the PR's author is the signed-in user, both required checks passed on the latest commit, and the branch is not behind. `CHANGES_REQUESTED` never qualifies: a reviewer asked for changes, so stop and show their comments. `--admin` then skips only *Review*; GitHub still enforces *Checks*, which has no bypass. Say in the report that it was merged by bypassing review.
+  - Anything else, including someone else's PR still waiting for review: stop and report the state. Never use `--admin` to merge a collaborator's work unreviewed.
+- `gh pr merge <n> --squash|--merge --delete-branch`, plus `--admin` only in the case above.
 
 ## 7. After the merge
 
