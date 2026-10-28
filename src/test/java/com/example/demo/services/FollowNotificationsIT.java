@@ -90,6 +90,38 @@ class FollowNotificationsIT {
                 .isEqualTo(1);
     }
 
+    /** Whether alex hears about dani's new wants, as GET /follows reports it. */
+    private boolean notifiesNewWants(ClerkIdentity alex, ClerkIdentity dani) {
+        return followService.following(alex).stream()
+                .filter(f -> f.getFollowee().getId().equals(idOf(dani)))
+                .findFirst().orElseThrow()
+                .isNotifyNewWants();
+    }
+
+    @Test
+    void aNewFollowIsNotMuted() {
+        ClerkIdentity alex = signUp("alex");
+        ClerkIdentity dani = signUp("dani");
+
+        followService.follow(idOf(dani), alex);
+
+        assertThat(notifiesNewWants(alex, dani)).isTrue();
+    }
+
+    @Test
+    void followingAgainUnmutes() {
+        ClerkIdentity alex = signUp("alex");
+        ClerkIdentity dani = signUp("dani");
+        followService.follow(idOf(dani), alex);
+        followService.mute(idOf(dani), alex);
+        assertThat(notifiesNewWants(alex, dani)).isFalse();
+
+        followService.unfollow(idOf(dani), alex);
+        followService.follow(idOf(dani), alex);
+
+        assertThat(notifiesNewWants(alex, dani)).isTrue();
+    }
+
     @Test
     void aNewFollowNotifiesOnceEvenWhenRepeated() {
         ClerkIdentity alex = signUp("alex");

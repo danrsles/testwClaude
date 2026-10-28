@@ -35,6 +35,11 @@ public class Follow {
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private Instant createdAt;
 
+    // Read-only here like created_at: the database defaults it to true, and
+    // FollowRepository.setNotifyNewWants changes it.
+    @Column(name = "notify_new_wants", nullable = false, insertable = false, updatable = false)
+    private boolean notifyNewWants = true;
+
     protected Follow() {
     }
 
@@ -57,5 +62,10 @@ public class Follow {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    /** False when the follower has muted the followee's new wants. */
+    public boolean isNotifyNewWants() {
+        return notifyNewWants;
     }
 }

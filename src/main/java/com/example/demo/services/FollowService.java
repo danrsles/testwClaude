@@ -60,17 +60,44 @@ public class FollowService {
         followRepository.deleteByFollowerIdAndFolloweeId(userService.current(who).getId(), followeeId);
     }
 
-    /** The users you follow, in the order you followed them. */
+    /**
+     * Your follows, in the order you made them: each one's followee, and
+     * whether you hear about their new wants.
+     */
     @Transactional
-    public List<User> following(ClerkIdentity who) {
-        return followRepository.findByFollowerIdOrderById(userService.current(who).getId()).stream()
-                .map(Follow::getFollowee)
-                .toList();
+    public List<Follow> following(ClerkIdentity who) {
+        return followRepository.findByFollowerIdOrderById(userService.current(who).getId());
+    }
+
+    /**
+     * Stops someone you follow's new wants being announced to you. You still
+     * follow them and see their wants. 404 if you don't follow them; muting
+     * twice changes nothing.
+     */
+    @Transactional
+    public void mute(Long followeeId, ClerkIdentity who) {
+        setNotifyNewWants(followeeId, false, who);
+    }
+
+    /**
+     * Announces someone you follow's new wants to you again, from the next
+     * one. Wants posted while muted are not announced now. 404 if you don't
+     * follow them.
+     */
+    @Transactional
+    public void unmute(Long followeeId, ClerkIdentity who) {
+        setNotifyNewWants(followeeId, true, who);
+    }
+
+    private void setNotifyNewWants(Long followeeId, boolean notify, ClerkIdentity who) {
+        if (followRepository.setNotifyNewWants(userService.current(who).getId(), followeeId, notify) == 0) {
+            throw new NotFollowingException(followeeId);
+        }
     }
 
     /**
      * Up to 20 users whose name contains the text, ignoring case, each marked
-     * with whether you follow them. Never includes you. A blank search finds
+     * with whether you follow them and whether you hear about their new wants. Never includes you. A blank search finds
      * no one rather than listing everybody.
      */
     @Transactional
@@ -81,9 +108,11 @@ public class FollowService {
             return List.of();
         }
         Set<Long> followed = followRepository.findFolloweeIds(me.getId());
+        Set<Long> muted = followRepository.findMutedFolloweeIds(me.getId());
         return userRepository.findTop20ByUsernameContainingIgnoreCaseAndIdNotOrderByUsername(wanted, me.getId())
                 .stream()
-                .map(user -> PersonResult.from(user, followed.contains(user.getId())))
+                .map(user -> PersonResult.from(user, followed.contains(user.getId()),
+                        followed.contains(user.getId()) && !muted.contains(user.getId())))
                 .toList();
     }
 }

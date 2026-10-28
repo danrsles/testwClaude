@@ -48,8 +48,8 @@ class PeopleControllerTest {
     @Test
     void searchesAsTheSignedInUserByPublicDetailsOnly() throws Exception {
         given(followService.search("al", DANI)).willReturn(List.of(
-                new PersonResult(2L, "alex", "https://img.clerk.com/alex.jpg", true),
-                new PersonResult(5L, "sal", null, false)));
+                new PersonResult(2L, "alex", "https://img.clerk.com/alex.jpg", true, true),
+                new PersonResult(5L, "sal", null, false, false)));
 
         mockMvc.perform(get("/users").param("q", "al").with(signedInAsDani()))
                 .andExpect(status().isOk())
@@ -62,6 +62,18 @@ class PeopleControllerTest {
                 .andExpect(jsonPath("$[0].email").doesNotExist())
                 .andExpect(jsonPath("$[0].clerkId").doesNotExist())
                 .andExpect(jsonPath("$[0].lastSignInAt").doesNotExist());
+    }
+
+    @Test
+    void searchResultsSayWhetherYouMutedThem() throws Exception {
+        given(followService.search("a", DANI)).willReturn(List.of(
+                new PersonResult(2L, "alex", null, true, false),
+                new PersonResult(3L, "sam", null, true, true)));
+
+        mockMvc.perform(get("/users").param("q", "a").with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].notifyNewWants").value(false))
+                .andExpect(jsonPath("$[1].notifyNewWants").value(true));
     }
 
     @Test

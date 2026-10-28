@@ -210,6 +210,49 @@ class WantAnnounceIT {
     }
 
     @Test
+    void mutedFollowersAreNotTold() {
+        ClerkIdentity dani = person("dani");
+        ClerkIdentity alex = follower("alex", dani);
+        ClerkIdentity sam = follower("sam", dani);
+        followService.mute(idOf(dani), alex);
+
+        want(dani, "Pizza Friday", 4);
+
+        assertThat(posted(alex)).isEmpty();
+        assertThat(posted(sam)).hasSize(1);
+    }
+
+    @Test
+    void mutingOneOwnerLeavesOthersAlone() {
+        ClerkIdentity dani = person("dani");
+        ClerkIdentity kim = person("kim");
+        ClerkIdentity alex = follower("alex", dani);
+        followService.follow(idOf(kim), alex);
+        followService.mute(idOf(dani), alex);
+
+        want(dani, "Pizza Friday", 4);
+        Long tacos = want(kim, "Taco Tuesday", 4);
+
+        assertThat(posted(alex)).singleElement().extracting(Notification::getWantId).isEqualTo(tacos);
+    }
+
+    /**
+     * Unmuting tells you nothing by itself. A want posted while you were
+     * muted reaches you only if its owner edits it later, as for a new follower.
+     */
+    @Test
+    void unmutingAnnouncesNothingByItself() {
+        ClerkIdentity dani = person("dani");
+        ClerkIdentity alex = follower("alex", dani);
+        followService.mute(idOf(dani), alex);
+        want(dani, "Pizza Friday", 4);
+
+        followService.unmute(idOf(dani), alex);
+
+        assertThat(posted(alex)).isEmpty();
+    }
+
+    @Test
     void aFailedAnnounceRollsBackTheCreate() {
         ClerkIdentity dani = person("dani");
         follower("alex", dani);

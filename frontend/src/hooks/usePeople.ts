@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { follow, listFollowing, searchPeople, unfollow } from '../api/people'
+import { follow, listFollowing, muteNewWants, searchPeople, unfollow, unmuteNewWants } from '../api/people'
 import type { Person } from '../types/people'
 
 /** How long typing must pause before a search is sent. */
@@ -22,12 +22,14 @@ export interface UsePeople {
   loading: boolean
   /** Why the last load failed, if it did. */
   error: string | null
-  /** The people whose follow or unfollow is in flight. */
+  /** The people with a follow, unfollow, mute or unmute in flight. */
   pending: ReadonlySet<number>
-  /** The last follow or unfollow that failed, to show beside that person. */
+  /** The last follow, unfollow, mute or unmute that failed, to show beside that person. */
   failed: { id: number; message: string } | null
   /** Follows or unfollows; resolves true on success, false if the API rejected it. */
   toggleFollow: (person: Person) => Promise<boolean>
+  /** Mutes or unmutes someone you follow's new wants; resolves as toggleFollow does. */
+  toggleNotify: (person: Person) => Promise<boolean>
 }
 
 /**
@@ -79,14 +81,16 @@ export function usePeople(query: string): UsePeople {
     return () => clearTimeout(timer)
   }, [text])
 
-  const toggleFollow = useCallback(async (person: Person) => {
+  /**
+   * Sends one change for a person and, once the API accepts it, writes what
+   * it did onto their row: the fields given, not a flip of what is on
+   * screen, so two requests that both followed cannot flip it back.
+   */
+  const change = useCallback(async (person: Person, request: () => Promise<void>, done: Partial<Person>) => {
     setPending((ids) => new Set(ids).add(person.id))
     try {
-      await (person.following ? unfollow(person.id) : follow(person.id))
-      // Set what this request did rather than flipping what is on screen, so
-      // two requests that both followed cannot flip it back.
-      const following = !person.following
-      setPeople((all) => all && all.map((p) => (p.id === person.id ? { ...p, following } : p)))
+      await request()
+      setPeople((all) => all && all.map((p) => (p.id === person.id ? { ...p, ...done } : p)))
       setFailed(null)
       return true
     } catch (e) {
@@ -101,5 +105,27 @@ export function usePeople(query: string): UsePeople {
     }
   }, [])
 
-  return { people, shownFor, loading, error, pending, failed, toggleFollow }
+  const toggleFollow = useCallback(
+    (person: Person) => {
+      const following = !person.following
+      // A new follow starts unmuted, and an unfollow forgets the mute.
+      return change(person, () => (following ? follow(person.id) : unfollow(person.id)), {
+        following,
+        notifyNewWants: following,
+      })
+    },
+    [change],
+  )
+
+  const toggleNotify = useCallback(
+    (person: Person) => {
+      const notifyNewWants = !person.notifyNewWants
+      return change(person, () => (notifyNewWants ? unmuteNewWants(person.id) : muteNewWants(person.id)), {
+        notifyNewWants,
+      })
+    },
+    [change],
+  )
+
+  return { people, shownFor, loading, error, pending, failed, toggleFollow, toggleNotify }
 }

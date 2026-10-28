@@ -50,16 +50,17 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 
     /**
      * Tells the owner's followers about a want (WANT_POSTED), in one
-     * statement, except those already in its lineup and those told before:
-     * ON CONFLICT against notifications_posted_once skips them, so this can
-     * run after every create and edit. Who is told repeats the feed's rule
+     * statement, except those who muted the owner, those already in its
+     * lineup and those told before: ON CONFLICT against
+     * notifications_posted_once skips them, so this can run after every
+     * create and edit. Who is told repeats the feed's rule
      * (WantRepository.isInFeed) in SQL; WantAnnounceIT checks the two agree.
      */
     @Modifying
     @Query(value = "INSERT INTO notifications (recipient_id, actor_id, type, want_id, want_message) "
             + "SELECT f.follower_id, :actorId, 'WANT_POSTED', w.id, w.message "
             + "FROM wants w JOIN follows f ON f.followee_id = w.user_id "
-            + "WHERE w.id = :wantId AND w.cancelled_at IS NULL "
+            + "WHERE w.id = :wantId AND w.cancelled_at IS NULL AND f.notify_new_wants "
             + "AND NOT EXISTS (SELECT 1 FROM want_signups s WHERE s.want_id = w.id AND s.user_id = f.follower_id) "
             + "ON CONFLICT (want_id, recipient_id) WHERE type = 'WANT_POSTED' DO NOTHING", nativeQuery = true)
     void announce(@Param("wantId") Long wantId, @Param("actorId") Long actorId);

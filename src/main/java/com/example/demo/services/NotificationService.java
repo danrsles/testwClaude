@@ -49,9 +49,9 @@ public class NotificationService {
     }
 
     /**
-     * Tells the actor's followers about their want, except anyone in its
-     * lineup or told about it before. The caller decides whether the want is
-     * worth announcing. Joins the caller's transaction.
+     * Tells the actor's followers about their want, except anyone who muted
+     * them, is in its lineup or was told about it before. The caller decides
+     * whether the want is worth announcing. Joins the caller's transaction.
      */
     @Transactional
     public void announce(Long wantId, User actor) {

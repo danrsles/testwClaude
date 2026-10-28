@@ -10,9 +10,7 @@ export async function searchPeople(text: string): Promise<Person[]> {
 /** Everyone you follow, in the order you followed them. */
 export async function listFollowing(): Promise<Person[]> {
   const response = await authFetch('/api/follows')
-  if (!response.ok) return fail(response)
-  const people: Omit<Person, 'following'>[] = await response.json()
-  return people.map((p) => ({ ...p, following: true }))
+  return response.ok ? response.json() : fail(response)
 }
 
 export async function follow(userId: number): Promise<void> {
@@ -22,5 +20,17 @@ export async function follow(userId: number): Promise<void> {
 
 export async function unfollow(userId: number): Promise<void> {
   const response = await authFetch(`/api/follows/${userId}`, { method: 'DELETE' })
+  if (!response.ok) await fail(response)
+}
+
+/** Stops someone you follow's new wants being announced to you. */
+export async function muteNewWants(userId: number): Promise<void> {
+  const response = await authFetch(`/api/follows/${userId}/notify`, { method: 'DELETE' })
+  if (!response.ok) await fail(response)
+}
+
+/** Announces someone you follow's new wants to you again. */
+export async function unmuteNewWants(userId: number): Promise<void> {
+  const response = await authFetch(`/api/follows/${userId}/notify`, { method: 'PUT' })
   if (!response.ok) await fail(response)
 }

@@ -110,7 +110,7 @@ class FollowServiceTest {
     void listsTheUsersYouFollow() {
         given(followRepository.findByFollowerIdOrderById(1L)).willReturn(List.of(new Follow(dani, alex)));
 
-        assertThat(followService.following(DANI)).containsExactly(alex);
+        assertThat(followService.following(DANI)).extracting(Follow::getFollowee).containsExactly(alex);
     }
 
     @Test
@@ -121,8 +121,32 @@ class FollowServiceTest {
                 .willReturn(List.of(alex, sal));
 
         assertThat(followService.search("  al ", DANI)).containsExactly(
-                new PersonResult(2L, "alex", null, true),
-                new PersonResult(5L, "sal", null, false));
+                new PersonResult(2L, "alex", null, true, true),
+                new PersonResult(5L, "sal", null, false, false));
+    }
+
+    @Test
+    void searchSaysWhomYouMuted() {
+        given(followRepository.findFolloweeIds(1L)).willReturn(Set.of(2L));
+        given(followRepository.findMutedFolloweeIds(1L)).willReturn(Set.of(2L));
+        given(userRepository.findTop20ByUsernameContainingIgnoreCaseAndIdNotOrderByUsername("al", 1L))
+                .willReturn(List.of(alex));
+
+        assertThat(followService.search("al", DANI)).containsExactly(new PersonResult(2L, "alex", null, true, false));
+    }
+
+    @Test
+    void mutingSomeoneYouDoNotFollowIsNotFound() {
+        given(followRepository.setNotifyNewWants(1L, 3L, false)).willReturn(0);
+
+        assertThatThrownBy(() -> followService.mute(3L, DANI)).isInstanceOf(NotFollowingException.class);
+    }
+
+    @Test
+    void unmutingSomeoneYouDoNotFollowIsNotFound() {
+        given(followRepository.setNotifyNewWants(1L, 3L, true)).willReturn(0);
+
+        assertThatThrownBy(() -> followService.unmute(3L, DANI)).isInstanceOf(NotFollowingException.class);
     }
 
     @Test
