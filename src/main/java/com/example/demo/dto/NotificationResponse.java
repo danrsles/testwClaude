@@ -13,12 +13,12 @@ import com.example.demo.models.NotificationType;
  * only when the owner renamed the want: the name it replaced.
  */
 public record NotificationResponse(Long id, NotificationType type, UserSummary actor, Instant createdAt,
-        boolean read, Long wantId, String wantMessage, String previousMessage) {
+        boolean read, Long wantId, String wantMessage, String previousMessage, Long circleId, String circleName) {
 
     public static NotificationResponse from(Notification notification) {
         return new NotificationResponse(notification.getId(), notification.getType(),
                 UserSummary.from(notification.getActor()), notification.getCreatedAt(),
                 notification.getReadAt() != null, notification.getWantId(), notification.getWantMessage(),
-                notification.getPreviousMessage());
+                notification.getPreviousMessage(), notification.getCircleId(), notification.getCircleName());
     }
 }

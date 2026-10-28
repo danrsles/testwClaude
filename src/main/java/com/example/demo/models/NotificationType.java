@@ -37,5 +37,7 @@ public enum NotificationType {
      * The actor, whom the recipient follows, posted a want the recipient can join.
      * Sent once per want and recipient at most.
      */
-    WANT_POSTED
+    WANT_POSTED,
+    /** The actor, a circle's owner, added the recipient to it. */
+    CIRCLE_ADDED
 }

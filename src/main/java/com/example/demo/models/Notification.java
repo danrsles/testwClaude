@@ -59,6 +59,14 @@ public class Notification {
     @Column(name = "previous_message", insertable = false, updatable = false)
     private String previousMessage;
 
+    /** The circle it is about, for CIRCLE_ADDED; null otherwise. A bare id, like wantId. */
+    @Column(name = "circle_id", insertable = false, updatable = false)
+    private Long circleId;
+
+    /** The circle's name when this was written, so it still reads correctly after a rename. */
+    @Column(name = "circle_name", insertable = false, updatable = false)
+    private String circleName;
+
     protected Notification() {
     }
 
@@ -102,5 +110,13 @@ public class Notification {
 
     public String getPreviousMessage() {
         return previousMessage;
+    }
+
+    public Long getCircleId() {
+        return circleId;
+    }
+
+    public String getCircleName() {
+        return circleName;
     }
 }

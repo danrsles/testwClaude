@@ -28,6 +28,8 @@ function followedBy(id: number, username: string, read = false): Notification {
     read,
     wantId: null,
     wantMessage: null,
+    circleId: null,
+    circleName: null,
     previousMessage: null,
   }
 }
@@ -281,6 +283,15 @@ describe('Notifications', () => {
     renderAt('/notifications')
 
     expect(await screen.findByRole('listitem')).toHaveTextContent("dani changed the deadline of 'Pizza Friday'")
+  })
+
+  it('describes CIRCLE_ADDED as "Dani added you to \'Climbing\'"', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([
+      { ...followedBy(1, 'dani', true), type: 'CIRCLE_ADDED', circleId: 7, circleName: 'Climbing' },
+    ])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("dani added you to 'Climbing'")
   })
 
   it('describes a posted want as "Sam posted \'Pizza Friday\'"', async () => {

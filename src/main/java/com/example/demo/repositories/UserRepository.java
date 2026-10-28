@@ -16,6 +16,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByClerkId(String clerkId);
 
+    /**
+     * Locks a user's row until the transaction ends, so that user's circle
+     * creates and renames take turns and a duplicate name is caught by the
+     * check, not by the unique index. FOR NO KEY UPDATE rather than FOR
+     * UPDATE, so inserts that only reference the user, such as a
+     * notification to them, don't wait for it.
+     */
+    @Query(value = "SELECT id FROM users WHERE id = :id FOR NO KEY UPDATE", nativeQuery = true)
+    Long lockForCircleNames(@Param("id") Long id);
+
     boolean existsByUsernameAndIdNot(String username, Long id);
 
     /**
