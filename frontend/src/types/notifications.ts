@@ -19,6 +19,7 @@ export type NotificationType =
   | 'WANT_DEADLINE_CHANGED'
   | 'WANT_EXPIRED'
   | 'WANT_POSTED'
+  | 'CIRCLE_ADDED'
 
 /** Someone who did something you are told about: public fields only. */
 export interface Actor {
@@ -42,4 +43,8 @@ export interface Notification {
   wantMessage: string | null
   /** On WANT_UPDATED, the message before a rename; null when the name didn't change. */
   previousMessage: string | null
+  /** The circle it is about, for CIRCLE_ADDED; null otherwise. */
+  circleId: number | null
+  /** The circle's name when the notification was sent; null when not about a circle. */
+  circleName: string | null
 }

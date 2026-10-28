@@ -38,6 +38,12 @@ public class NotificationService {
         notificationRepository.notifyAboutWant(recipientId, actor.getId(), type.name(), wantId);
     }
 
+    /** As notify, about a circle, whose current name the notification keeps. Joins the caller's transaction. */
+    @Transactional
+    public void notifyAboutCircle(Long recipientId, User actor, NotificationType type, Long circleId) {
+        notificationRepository.notifyAboutCircle(recipientId, actor.getId(), type.name(), circleId);
+    }
+
     /**
      * Tells a want's lineup, all but its owner, that the actor did something
      * to it. previousMessage is the name it replaced, or null. Joins the

@@ -14,6 +14,20 @@ public interface FollowRepository extends JpaRepository<Follow, Long> {
 
     List<Follow> findByFollowerIdOrderById(Long followerId);
 
+    /** Who follows a user, in the order they started. */
+    List<Follow> findByFolloweeIdOrderById(Long followeeId);
+
+    /**
+     * Locks a follow row with FOR KEY SHARE, so it can't be deleted until the
+     * transaction ends, and returns 1, or null if there is no such follow.
+     * CircleService takes it before adding a member: an unfollow that got
+     * there first has deleted the row, and one that comes later waits, so
+     * the insert into circle_members never breaks its key to follows.
+     */
+    @Query(value = "SELECT 1 FROM follows WHERE follower_id = :followerId AND followee_id = :followeeId "
+            + "FOR KEY SHARE", nativeQuery = true)
+    Integer lockFollow(@Param("followerId") Long followerId, @Param("followeeId") Long followeeId);
+
     void deleteByFollowerIdAndFolloweeId(Long followerId, Long followeeId);
 
     /** The ids of everyone a user follows, for marking search results. */

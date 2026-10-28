@@ -63,6 +63,8 @@ function describe(n: Notification): string {
       return `${want} closed at its deadline`
     case 'WANT_POSTED':
       return `posted ${want}`
+    case 'CIRCLE_ADDED':
+      return `added you to '${n.circleName}'`
   }
 }
 

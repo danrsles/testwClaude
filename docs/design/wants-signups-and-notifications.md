@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); step 6 built (deadline and expiry, with its screen); step 7 optional; step 8 designed (announcing new wants, and circles as groups), with 8a (announcing to all followers) and 8b (muting) built.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); step 6 built (deadline and expiry, with its screen); step 7 optional; step 8 designed (announcing new wants, and circles as groups), with 8a (announcing to all followers), 8b (muting) and 8c's API (circles as groups) built.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 

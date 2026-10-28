@@ -35,6 +35,18 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
             @Param("type") String type, @Param("wantId") Long wantId);
 
     /**
+     * As notify, about a circle. The database copies the circle's current
+     * name onto the row, so the notification still reads correctly after a
+     * rename.
+     */
+    @Modifying
+    @Query(value = "INSERT INTO notifications (recipient_id, actor_id, type, circle_id, circle_name) "
+            + "SELECT :recipientId, :actorId, :type, c.id, c.name FROM circles c WHERE c.id = :circleId",
+            nativeQuery = true)
+    void notifyAboutCircle(@Param("recipientId") Long recipientId, @Param("actorId") Long actorId,
+            @Param("type") String type, @Param("circleId") Long circleId);
+
+    /**
      * Tells everyone signed up for a want, except its owner, in one statement,
      * so either the whole lineup hears or, if the change rolls back, nobody
      * does. previousMessage is cast because PostgreSQL cannot infer a type

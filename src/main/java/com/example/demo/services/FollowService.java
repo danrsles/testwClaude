@@ -69,6 +69,14 @@ public class FollowService {
         return followRepository.findByFollowerIdOrderById(userService.current(who).getId());
     }
 
+    /** The users who follow you, in the order they started, to pick circle members from. */
+    @Transactional
+    public List<User> followers(ClerkIdentity who) {
+        return followRepository.findByFolloweeIdOrderById(userService.current(who).getId()).stream()
+                .map(Follow::getFollower)
+                .toList();
+    }
+
     /**
      * Stops someone you follow's new wants being announced to you. You still
      * follow them and see their wants. 404 if you don't follow them; muting
