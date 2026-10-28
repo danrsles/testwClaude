@@ -1,9 +1,20 @@
 import { getToken } from '@clerk/react'
 
-/** Turns a failed response into an Error carrying something readable. */
+/** A refused request: its status, so a hook can say why in words, and the response body as the message. */
+export class HttpError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'HttpError'
+    this.status = status
+  }
+}
+
+/** Turns a failed response into an HttpError carrying its status and something readable. */
 export async function fail(response: Response): Promise<never> {
   const body = await response.text()
-  throw new Error(body || `${response.status} ${response.statusText}`)
+  throw new HttpError(response.status, body || `${response.status} ${response.statusText}`)
 }
 
 /**

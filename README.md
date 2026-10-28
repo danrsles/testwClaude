@@ -469,7 +469,7 @@ Reload the app after each change to see the list follow along.
 
 ### Circles
 
-Circles work like group chats. Whoever creates one is its **owner**: they name it, add people who follow them, remove anyone, rename it and delete it. Being added makes you a member at once and tells you ("dani added you to 'Climbing'"). Members see the circle, who owns it and who else is in it, and can leave. Unfollowing the owner takes you out of all their circles, and following again doesn't put you back. Wants don't use circles yet; posting a want to a circle comes next (see the design doc, step 8). There is no screen for circles yet either; it follows in its own PR.
+Circles work like group chats. Whoever creates one is its **owner**: they name it, add people who follow them, remove anyone, rename it and delete it. Being added makes you a member at once and tells you ("dani added you to 'Climbing'"). Members see the circle, who owns it and who else is in it, and can leave. Unfollowing the owner takes you out of all their circles, and following again doesn't put you back. Wants don't use circles yet; posting a want to a circle comes next (see the design doc, step 8). In the app, the **Circles** screen (`/circles`) lists your circles and the ones you're in. Name a new one and press Add; open one of yours to tick followers in or out, searching them by name, or rename or delete it. Open one you're in to see who else is, or leave it. If a circle was deleted meanwhile, the screen says so and drops it.
 
 A member asking for something only the owner can do gets `403`; anyone else, or anyone asking about a deleted circle, gets `404`, so outsiders learn nothing. Deleting a circle hides it everywhere; the row is kept (archived), because wants will point at it.
 
@@ -534,10 +534,10 @@ src/main/resources/db/migration/   Flyway migrations
 frontend/src/
   api/           transport, one function per endpoint, no state; http.ts attaches the Clerk token
   hooks/         server state: useWants, MeProvider/useMe, which load you once and share you,
-                 and useNotifications, the one hook on TanStack Query
+                 and useNotifications and useCircles, on TanStack Query
   types/         shapes mirroring the API
-  components/    the screens (Wants.tsx at /, People.tsx at /people, Notifications.tsx at
-                 /notifications, Info.tsx at /info), NotificationsBell.tsx in the header,
+  components/    the screens (Wants.tsx at /, People.tsx at /people, Circles.tsx at /circles,
+                 Notifications.tsx at /notifications, Info.tsx at /info), NotificationsBell.tsx in the header,
                  SignInScreen.tsx for signed-out visitors, and Avatar.tsx, the round
                  picture beside each want
   App.tsx        the shell: the sign-in gate, nav and routes (ClerkProvider,

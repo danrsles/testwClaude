@@ -55,22 +55,27 @@ The dev server proxies `/api/*` to `http://localhost:8080`, stripping the prefix
 `src/` is organised by role:
 
 ```
-src/api/http.ts                 `fail`, plus `authFetch`, which attaches the Clerk session token
+src/api/http.ts                 `fail`, which throws an `HttpError` carrying the status, plus `authFetch`, which attaches the Clerk session token
 src/api/wants.ts                transport: one function per endpoint, no state
 src/api/me.ts                   the same for /me (GET and PUT)
 src/api/people.ts               the same for /users?q=, /follows and /follows/{id}/notify
 src/api/notifications.ts        the same for /notifications and /notifications/read
+src/api/circles.ts              the same for /circles and /circles/{id}/members
+src/api/followers.ts            the same for /followers, the people you can add to a circle
 src/hooks/useWants.ts           server state: the cached list and its mutations
 src/hooks/usePeople.ts          server state: who you follow, or search results, and follow/unfollow
 src/hooks/useNotifications.ts   server state on TanStack Query: your notifications, polled, and markRead
+src/hooks/useCircles.ts         server state on TanStack Query: your circles, a circle's members and your followers, and their changes
 src/hooks/MeProvider.tsx        server state: the signed-in user, loaded once and shared
 src/hooks/useOnPictureChange.ts calls back when you change your picture in Clerk, after minting a fresh token
 src/hooks/useMe.ts              the context MeProvider fills, and the hook that reads it
 src/types/wants.ts              the shapes the API returns and accepts
 src/types/people.ts             Person, a search result or someone you follow
 src/types/notifications.ts      Notification and its Actor
+src/types/circles.ts            Circle and UserSummary, its owner or a member
 src/components/Wants.tsx        the whole wants screen, including its own UI state
 src/components/People.tsx       search users by name and follow or unfollow them, or mute their new wants, routed at /people
+src/components/Circles.tsx      your circles and the ones you're in, routed at /circles
 src/components/Notifications.tsx your notifications, routed at /notifications; opening it marks them read
 src/components/NotificationsBell.tsx the header's bell: unread count, link to /notifications
 src/components/Info.tsx         a static about page, routed at /info
@@ -131,6 +136,12 @@ Which user the app acts as comes from the token, so no component passes a user i
 - The first value, Clerk finishing loading the user, is not treated as a change.
 - `Wants.test.tsx` mocks `@clerk/react` (`useUser`, `getToken`) with a `vi.hoisted` user whose `imageUrl` a test changes between `rerender`s. `App.test.tsx`'s Clerk mock includes both too.
 
+**Circles in the UI** (`Circles.tsx`, `useCircles.ts`, on TanStack Query like notifications):
+- Query keys `['circles', me.id]`, `['circles', me.id, circleId, 'members']` and `['followers', me.id]`, disabled until `/me` loads. Each change writes its result into the cache, then refetches. Pending and failed state is per row (`useRowChanges`), keyed by circle id, or by person id for members; `NEW_CIRCLE` (0) is the create form.
+- The screen checks names itself (`nameProblem`: blank, over 40, "General", a duplicate among circles you own) and says why Add or Save is disabled, because the API's 400 has no message.
+- Refusals are worded from the status (`explain`, through `HttpError`), never the raw body, which is Spring's JSON. A 404 refetches the list, so a circle deleted elsewhere leaves it; on Delete or Leave a 404 counts as done (`unlessMissing`).
+- Opening a circle you own lists your followers with an "In <circle>" box each, filtered by name on screen. A circle you're in shows its owner and members, and Leave. Delete and Leave confirm with `window.confirm`, then move focus to the neighbouring circle, or the "New circle" field when none is left (`focusAfterGone`).
+
 If more state needs sharing, reach for TanStack Query rather than more providers. **Notifications already do** (`@tanstack/react-query`, the `QueryClientProvider` in `main.tsx`):
 - `useNotifications` is called by both `NotificationsBell` and `Notifications`; the cache serves both from one request, so marking read on the page clears the badge in the same render.
 - It polls with `refetchInterval` (`POLL_MS`, 30 s), which pauses in background tabs, and refetches on window focus. The bell is in the header of every signed-in screen, so polling never stops while the app is open.
@@ -167,7 +178,7 @@ State is local `useState`. All server data is refetched after each mutation, whi
 
 ## Architecture
 
-**Planned, partly built:** the design for notifications and for signups on wants with a capacity is in `docs/design/wants-signups-and-notifications.md`. Steps 1 (notifications for follows), 2 (capacity and signups, with their screen) and 3 (close, reopen and cancel, with their buttons) are built and described below, and so is step 4's start and end, with their buttons. Step 5's open invite is built too, with its screen, and so is step 6's deadline and expiry job, with its screen. Of step 8, 8a (announcing new wants to all followers) and 8b (muting, with its checkbox) are built, and so is 8c's API for circles; its screen, and wants in circles (8d, 8e), are not. Everything below describes the code as it is; move facts here as each step lands.
+**Planned, partly built:** the design for notifications and for signups on wants with a capacity is in `docs/design/wants-signups-and-notifications.md`. Steps 1 (notifications for follows), 2 (capacity and signups, with their screen) and 3 (close, reopen and cancel, with their buttons) are built and described below, and so is step 4's start and end, with their buttons. Step 5's open invite is built too, with its screen, and so is step 6's deadline and expiry job, with its screen. Of step 8, 8a (announcing new wants to all followers) and 8b (muting, with its checkbox) are built, and so is 8c, circles with their API and screen; wants in circles (8d, 8e) are not. Everything below describes the code as it is; move facts here as each step lands.
 
 A single-module Spring Boot 3.5.6 web application on Java 21. `DemoApplication` sits in the root package `com.example.demo` so component scanning reaches the layers beneath it:
 

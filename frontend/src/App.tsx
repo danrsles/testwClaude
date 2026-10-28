@@ -1,5 +1,6 @@
 import { Show, UserButton } from '@clerk/react'
 import { NavLink, Route, Routes } from 'react-router'
+import Circles from './components/Circles'
 import Info from './components/Info'
 import Notifications from './components/Notifications'
 import NotificationsBell from './components/NotificationsBell'
@@ -11,6 +12,7 @@ import MeProvider from './hooks/MeProvider'
 const NAV = [
   { to: '/', label: 'Wants' },
   { to: '/people', label: 'People' },
+  { to: '/circles', label: 'Circles' },
   { to: '/info', label: 'Info' },
 ]
 
@@ -63,6 +65,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Wants />} />
               <Route path="/people" element={<People />} />
+              <Route path="/circles" element={<Circles />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/info" element={<Info />} />
             </Routes>
