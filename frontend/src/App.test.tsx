@@ -42,6 +42,18 @@ vi.mock('./api/notifications', () => ({
   markNotificationsRead: vi.fn(),
 }))
 
+vi.mock('./api/circles', () => ({
+  listCircles: vi.fn().mockResolvedValue([]),
+  createCircle: vi.fn(),
+  renameCircle: vi.fn(),
+  deleteCircle: vi.fn(),
+  listMembers: vi.fn().mockResolvedValue([]),
+  addMember: vi.fn(),
+  removeMember: vi.fn(),
+}))
+
+vi.mock('./api/followers', () => ({ listFollowers: vi.fn().mockResolvedValue([]) }))
+
 vi.mock('./api/me', () => ({
   getMe: vi.fn().mockResolvedValue({
     id: 1,
@@ -112,6 +124,15 @@ describe('App routing', () => {
     await waitFor(() => expect(document.title).toBe('About · Wants'))
   })
 
+  it('routes /circles and links to it from the nav', async () => {
+    renderAt('/circles')
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Circles' })).toBeInTheDocument()
+    await waitFor(() => expect(document.title).toBe('Circles · Wants'))
+    const nav = screen.getByRole('navigation', { name: 'Main' })
+    expect(within(nav).getByRole('link', { name: 'Circles' })).toHaveAttribute('href', '/circles')
+  })
+
   it('shows the notifications page at /notifications', () => {
     renderAt('/notifications')
 
@@ -149,7 +170,7 @@ describe('App routing', () => {
       within(nav)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Wants', 'People', 'Info'])
+    ).toEqual(['Wants', 'People', 'Circles', 'Info'])
     expect(screen.queryByRole('link', { name: /profile/i })).not.toBeInTheDocument()
   })
 })
