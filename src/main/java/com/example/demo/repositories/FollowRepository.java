@@ -20,6 +20,21 @@ public interface FollowRepository extends JpaRepository<Follow, Long> {
     @Query("select f.followee.id from Follow f where f.follower.id = :followerId")
     Set<Long> findFolloweeIds(@Param("followerId") Long followerId);
 
+    /** The ids of everyone a user follows but has muted, for marking search results. */
+    @Query("select f.followee.id from Follow f where f.follower.id = :followerId and f.notifyNewWants = false")
+    Set<Long> findMutedFolloweeIds(@Param("followerId") Long followerId);
+
+    /**
+     * Mutes (false) or unmutes (true) a followee's new wants. Returns the
+     * rows matched: 0 means the follower doesn't follow them. A repeat still
+     * matches its row, so it returns 1 and changes nothing.
+     */
+    @Modifying
+    @Query("update Follow f set f.notifyNewWants = :notify "
+            + "where f.follower.id = :followerId and f.followee.id = :followeeId")
+    int setNotifyNewWants(@Param("followerId") Long followerId, @Param("followeeId") Long followeeId,
+            @Param("notify") boolean notify);
+
     /**
      * Follows unless already following. ON CONFLICT makes a repeat, or two at
      * once, a no-op rather than a unique-constraint exception, which would

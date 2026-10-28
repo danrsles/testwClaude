@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { follow, listFollowing, searchPeople, unfollow } from '../api/people'
+import { follow, listFollowing, muteNewWants, searchPeople, unfollow, unmuteNewWants } from '../api/people'
 import type { Person } from '../types/people'
 import People from './People'
 
@@ -12,10 +12,12 @@ vi.mock('../api/people', () => ({
   listFollowing: vi.fn(),
   follow: vi.fn(),
   unfollow: vi.fn(),
+  muteNewWants: vi.fn(),
+  unmuteNewWants: vi.fn(),
 }))
 
-function person(id: number, username: string, following = false): Person {
-  return { id, username, imageUrl: null, following }
+function person(id: number, username: string, following = false, notifyNewWants = following): Person {
+  return { id, username, imageUrl: null, following, notifyNewWants }
 }
 
 describe('People', () => {
@@ -161,6 +163,61 @@ describe('People', () => {
     finish.get(4)!()
     await waitFor(() => expect(alex).toHaveAccessibleName('Unfollow alex'))
     expect(alex).toHaveAttribute('aria-disabled', 'false')
+  })
+
+  it('shows "Tell me about new wants", ticked, for people you follow', async () => {
+    render(<People />)
+
+    const box = await screen.findByRole('checkbox', { name: "Tell me about alex's new wants" })
+    expect(box).toBeChecked()
+    expect(screen.getByText('Tell me about new wants')).toBeInTheDocument()
+  })
+
+  it("has no such box for people you don't follow", async () => {
+    render(<People />)
+    await userEvent.type(screen.getByLabelText('Search by username'), 'sam')
+
+    await screen.findByRole('button', { name: 'Follow sam' })
+    expect(screen.queryByRole('checkbox', { name: "Tell me about sam's new wants" })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: "Tell me about alex's new wants" })).toBeInTheDocument()
+  })
+
+  it('unticking mutes them', async () => {
+    vi.mocked(muteNewWants).mockResolvedValue(undefined)
+    render(<People />)
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: "Tell me about alex's new wants" }))
+
+    expect(muteNewWants).toHaveBeenCalledWith(2)
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: "Tell me about alex's new wants" })).not.toBeChecked(),
+    )
+  })
+
+  it('ticking unmutes them', async () => {
+    vi.mocked(listFollowing).mockResolvedValue([person(2, 'alex', true, false)])
+    vi.mocked(unmuteNewWants).mockResolvedValue(undefined)
+    render(<People />)
+
+    const box = await screen.findByRole('checkbox', { name: "Tell me about alex's new wants" })
+    expect(box).not.toBeChecked()
+    await userEvent.click(box)
+
+    expect(unmuteNewWants).toHaveBeenCalledWith(2)
+    await waitFor(() => expect(box).toBeChecked())
+  })
+
+  it('shows an error and leaves the box as it was when muting fails', async () => {
+    vi.mocked(muteNewWants).mockRejectedValue(new Error('You do not follow user 2'))
+    render(<People />)
+
+    const box = await screen.findByRole('checkbox', { name: "Tell me about alex's new wants" })
+    await userEvent.click(box)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('You do not follow user 2')
+    expect(alert.closest('li')).toHaveTextContent('alex')
+    expect(box).toBeChecked()
   })
 
   it('drops the earlier rows when a search fails', async () => {

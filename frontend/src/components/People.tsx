@@ -12,7 +12,7 @@ export default function People() {
   const [query, setQuery] = useState('')
   // What the last follow or unfollow did, until the search changes.
   const [notice, setNotice] = useState<string | null>(null)
-  const { people, shownFor, loading, error, pending, failed, toggleFollow } = usePeople(query)
+  const { people, shownFor, loading, error, pending, failed, toggleFollow, toggleNotify } = usePeople(query)
   // Headings and counts describe the rows on screen, which lag the box while
   // a search is in flight.
   const searching = shownFor !== null && shownFor !== ''
@@ -98,6 +98,20 @@ export default function People() {
                 {/* Decorative: the username beside it names the person. */}
                 <Avatar src={person.imageUrl} alt="" size={32} />
                 <span className="min-w-0 flex-1 truncate">{person.username}</span>
+                {person.following && (
+                  // aria-disabled, like the button, so focus stays on the box while its request runs.
+                  <label className="flex items-center gap-1.5 text-sm whitespace-nowrap text-stone-600 dark:text-stone-400">
+                    <input
+                      type="checkbox"
+                      checked={person.notifyNewWants}
+                      onChange={() => !busy && toggleNotify(person)}
+                      aria-disabled={busy}
+                      aria-label={`Tell me about ${person.username}'s new wants`}
+                      className="accent-emerald-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:accent-emerald-500"
+                    />
+                    Tell me about new wants
+                  </label>
+                )}
                 {/*
                   One button whose label swaps, so focus stays on it after a
                   toggle. aria-disabled rather than disabled while the request

@@ -3,11 +3,13 @@ package com.example.demo.controllers;
 import java.time.Instant;
 import java.util.List;
 
+import com.example.demo.models.Follow;
 import com.example.demo.models.User;
 import com.example.demo.security.SecurityConfig;
 import com.example.demo.services.CannotFollowYourselfException;
 import com.example.demo.services.ClerkIdentity;
 import com.example.demo.services.FollowService;
+import com.example.demo.services.NotFollowingException;
 import com.example.demo.services.UserNotFoundException;
 
 import org.junit.jupiter.api.Test;
@@ -55,6 +57,12 @@ class FollowControllerTest {
         return jwt().jwt(token -> token.subject("user_dani").claim("username", "dani"));
     }
 
+    private static User dani() {
+        User user = new User("dani", "user_dani");
+        ReflectionTestUtils.setField(user, "id", 1L);
+        return user;
+    }
+
     private static User alexWithPrivateDetails() {
         User user = new User("alex", "user_alex");
         ReflectionTestUtils.setField(user, "id", 2L);
@@ -98,7 +106,7 @@ class FollowControllerTest {
 
     @Test
     void listsWhoYouFollowByPublicDetailsOnly() throws Exception {
-        given(followService.following(DANI)).willReturn(List.of(alexWithPrivateDetails()));
+        given(followService.following(DANI)).willReturn(List.of(new Follow(dani(), alexWithPrivateDetails())));
 
         mockMvc.perform(get("/follows").with(signedInAsDani()))
                 .andExpect(status().isOk())
@@ -110,6 +118,54 @@ class FollowControllerTest {
                 .andExpect(jsonPath("$[0].clerkId").doesNotExist())
                 .andExpect(jsonPath("$[0].lastSignInAt").doesNotExist())
                 .andExpect(content().string(not(containsString("alex@example.com"))));
+    }
+
+    @Test
+    void listsWhoYouFollowWithWhetherTheyAreMuted() throws Exception {
+        Follow muted = new Follow(dani(), alexWithPrivateDetails());
+        ReflectionTestUtils.setField(muted, "notifyNewWants", false);
+        given(followService.following(DANI)).willReturn(List.of(muted));
+
+        mockMvc.perform(get("/follows").with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].following").value(true))
+                .andExpect(jsonPath("$[0].notifyNewWants").value(false));
+    }
+
+    @Test
+    void mutesWithDelete() throws Exception {
+        mockMvc.perform(delete("/follows/2/notify").with(signedInAsDani()))
+                .andExpect(status().isNoContent());
+
+        then(followService).should().mute(2L, DANI);
+    }
+
+    @Test
+    void unmutesWithPut() throws Exception {
+        mockMvc.perform(put("/follows/2/notify").with(signedInAsDani()))
+                .andExpect(status().isNoContent());
+
+        then(followService).should().unmute(2L, DANI);
+    }
+
+    @Test
+    void mutingSomeoneYouDoNotFollowIs404() throws Exception {
+        willThrow(new NotFollowingException(3L)).given(followService).mute(3L, DANI);
+        willThrow(new NotFollowingException(3L)).given(followService).unmute(3L, DANI);
+
+        mockMvc.perform(delete("/follows/3/notify").with(signedInAsDani()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(put("/follows/3/notify").with(signedInAsDani()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void muteRoutesNeedAToken() throws Exception {
+        mockMvc.perform(put("/follows/2/notify")).andExpect(status().isUnauthorized());
+        mockMvc.perform(delete("/follows/2/notify")).andExpect(status().isUnauthorized());
+
+        then(followService).should(never()).mute(any(), any());
+        then(followService).should(never()).unmute(any(), any());
     }
 
     @Test

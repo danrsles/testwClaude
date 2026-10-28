@@ -1,6 +1,6 @@
 # Wants signups and notifications
 
-**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); step 6 built (deadline and expiry, with its screen); step 7 optional; step 8 designed (announcing new wants, and circles), with 8a built (announcing to all followers).** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
+**Status: steps 1 to 5 built (notifications for follows; capacity and signups; close, reopen and cancel; happening and ended; open invite); step 6 built (deadline and expiry, with its screen); step 7 optional; step 8 designed (announcing new wants, and circles), with 8a (announcing to all followers) and 8b (muting) built.** CLAUDE.md and the README describe what exists; this describes what is coming and why. Update it in the same PR whenever a step changes a decision.
 
 ## Goal
 
@@ -188,7 +188,7 @@ Each step is one PR and works without the ones after it.
 7. **Optional: live updates over SSE**, if polling is too slow.
 8. **Designed, not built: tell followers about new wants, with circles,** so people hear about wants they could join without opening the feed. In five PRs, each working without the next:
    1. **Done. 8a, announce to all followers:** `WANT_POSTED`, the `notifications_posted_once` index, an index on `follows (followee_id)`, and the notification's text on the screen.
-   2. **8b, mute:** `follows.notify_new_wants` and `PUT` / `DELETE /follows/{userId}/notify`, with a toggle on the People screen.
+   2. **Done. 8b, mute:** `follows.notify_new_wants` and `PUT` / `DELETE /follows/{userId}/notify`, with a toggle on the People screen. `GET /follows` and `GET /users` return `PersonResult` with `notifyNewWants`, so the screen knows who is muted; `UserSummary` stays as it is for lineups and actors.
    3. **8c, circles, not yet used by any want:** the tables, the `/circles` and `/followers` routes, and a `/circles` screen.
    4. **8d, circles decide who sees a want:** `wants.circle_id`, `circleId` and `allFollowers` on create and edit, with the feed, signups and announcing changed in the same PR.
    5. **8e, the picker:** a circle select on Add and Edit, "General" first and the default, and a "Shared with …" pill on rows that aren't General.
