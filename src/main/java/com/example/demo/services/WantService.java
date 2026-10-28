@@ -72,9 +72,9 @@ public class WantService {
 
     /**
      * Creates a want with its owner in the first seat, and tells the owner it
-     * was created. Followers are not told, for now. expiresAt is its
-     * deadline, or null for none; the controller has already refused one in
-     * the past.
+     * was created. If anyone else can join, the owner's followers are told
+     * too (WANT_POSTED). expiresAt is its deadline, or null for none; the
+     * controller has already refused one in the past.
      */
     @Transactional
     public WantResponse create(String message, Category category, Integer capacity, Instant expiresAt,
@@ -85,6 +85,10 @@ public class WantService {
         Want want = wantRepository.save(created);
         wantSignupRepository.signUpIfAbsent(want.getId(), me.getId());
         notificationService.notify(me.getId(), me, NotificationType.WANT_CREATED, want.getId());
+        // The owner's seat is the only one taken so far.
+        if (want.getCapacity() == null || want.getCapacity() > 1) {
+            notificationService.announce(want.getId(), me);
+        }
         return withSeats(want, me);
     }
 
@@ -98,12 +102,18 @@ public class WantService {
      * open want takes no capacity (400), as any number is a lower limit. A
      * new name or category tells the lineup, with the old name when it
      * changed, and so do opening and limiting; a capacity raise alone, a
-     * repeat that changes nothing, or saving unchanged tells nobody.
+     * repeat that changes nothing, or saving unchanged tells the lineup
+     * nothing.
      *
      * expiresAt sets or moves the deadline and noDeadline true removes it;
      * with neither it stays as it was. A want past its deadline is closed,
      * so it cannot be edited. A deadline that changed tells the lineup
      * (WANT_DEADLINE_CHANGED); the same one again tells nobody.
+     *
+     * While a seat is free, every edit announces the want to followers not
+     * yet told (WANT_POSTED), so a want whose capacity was raised from 1, or
+     * someone who followed since, is caught on the next edit. Nobody is told
+     * twice.
      */
     @Transactional
     public WantResponse update(Long wantId, String message, Category category, Integer capacity,
@@ -154,6 +164,11 @@ public class WantService {
         }
         if (deadlineChanged) {
             notificationService.notifyLineup(wantId, saved.getUser(), NotificationType.WANT_DEADLINE_CHANGED, null);
+        }
+        // Only an active want gets this far, and the row lock keeps the count exact.
+        Integer seats = saved.getCapacity();
+        if (seats == null || wantSignupRepository.countByWantId(wantId) < seats) {
+            notificationService.announce(wantId, saved.getUser());
         }
         return withSeats(saved, saved.getUser());
     }

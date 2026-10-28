@@ -61,6 +61,8 @@ function describe(n: Notification): string {
       return `changed the deadline of ${want}`
     case 'WANT_EXPIRED':
       return `${want} closed at its deadline`
+    case 'WANT_POSTED':
+      return `posted ${want}`
   }
 }
 

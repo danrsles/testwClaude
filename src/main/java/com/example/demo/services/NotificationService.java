@@ -48,6 +48,16 @@ public class NotificationService {
         notificationRepository.notifyLineup(wantId, actor.getId(), type.name(), previousMessage);
     }
 
+    /**
+     * Tells the actor's followers about their want, except anyone in its
+     * lineup or told about it before. The caller decides whether the want is
+     * worth announcing. Joins the caller's transaction.
+     */
+    @Transactional
+    public void announce(Long wantId, User actor) {
+        notificationRepository.announce(wantId, actor.getId());
+    }
+
     /** Your 50 newest notifications, newest first, read or not. */
     @Transactional
     public List<Notification> mine(ClerkIdentity who) {

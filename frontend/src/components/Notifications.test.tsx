@@ -283,6 +283,13 @@ describe('Notifications', () => {
     expect(await screen.findByRole('listitem')).toHaveTextContent("dani changed the deadline of 'Pizza Friday'")
   })
 
+  it('describes a posted want as "Sam posted \'Pizza Friday\'"', async () => {
+    vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_POSTED', 'sam')])
+    renderAt('/notifications')
+
+    expect(await screen.findByRole('listitem')).toHaveTextContent("sam posted 'Pizza Friday'")
+  })
+
   it('describes WANT_EXPIRED as "\'Pizza Friday\' closed at its deadline", with no actor', async () => {
     // Nobody closed it, the clock did; the API names the owner as actor, which the words leave out.
     vi.mocked(listNotifications).mockResolvedValue([aboutWant('WANT_EXPIRED', 'dani')])

@@ -32,5 +32,10 @@ public enum NotificationType {
      * A want the recipient is signed up for, or owns, closed at its deadline.
      * Nobody acted, so the actor is the owner, and for the owner the recipient too.
      */
-    WANT_EXPIRED
+    WANT_EXPIRED,
+    /**
+     * The actor, whom the recipient follows, posted a want the recipient can join.
+     * Sent once per want and recipient at most.
+     */
+    WANT_POSTED
 }
