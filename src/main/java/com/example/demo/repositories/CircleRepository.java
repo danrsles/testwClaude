@@ -34,6 +34,16 @@ public interface CircleRepository extends JpaRepository<Circle, Long> {
     @Query("select c from Circle c where c.id = :id and c.archivedAt is null")
     Optional<Circle> findLiveForUpdate(@Param("id") Long id);
 
+    /**
+     * As findLive, with SELECT ... FOR SHARE: posting a want into a circle
+     * takes it, so a post waits for a removal or a delete that holds the
+     * circle's FOR UPDATE lock, then re-checks. Posts don't wait for each
+     * other.
+     */
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("select c from Circle c where c.id = :id and c.archivedAt is null")
+    Optional<Circle> findLiveForShare(@Param("id") Long id);
+
     /** Circles a user owns or is in, not deleted, oldest first. */
     @Query(value = "SELECT c.* FROM circles c WHERE c.archived_at IS NULL "
             + "AND (c.owner_id = :userId OR EXISTS "

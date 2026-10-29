@@ -78,6 +78,30 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     void announce(@Param("wantId") Long wantId, @Param("actorId") Long actorId);
 
     /**
+     * As announce, for a want posted to a circle: its owner and members,
+     * except the poster, the lineup and anyone told before. Muting doesn't
+     * apply: following has nothing to do with being in a circle. Carries the
+     * circle's id and name, so a member who doesn't follow the poster sees
+     * why they were told. The poster must still be in the circle and the
+     * circle not deleted, as for seeing the want (WantRepository.isInFeed);
+     * WantAnnounceIT checks the two agree.
+     */
+    @Modifying
+    @Query(value = "INSERT INTO notifications "
+            + "(recipient_id, actor_id, type, want_id, want_message, circle_id, circle_name) "
+            + "SELECT r.recipient_id, :actorId, 'WANT_POSTED', w.id, w.message, c.id, c.name "
+            + "FROM wants w JOIN circles c ON c.id = w.circle_id "
+            + "JOIN (SELECT c2.owner_id AS recipient_id, c2.id AS circle_id FROM circles c2 "
+            + "      UNION SELECT m.member_id, m.circle_id FROM circle_members m) r ON r.circle_id = c.id "
+            + "WHERE w.id = :wantId AND w.cancelled_at IS NULL AND c.archived_at IS NULL "
+            + "AND r.recipient_id <> w.user_id "
+            + "AND (c.owner_id = w.user_id OR EXISTS "
+            + "     (SELECT 1 FROM circle_members p WHERE p.circle_id = c.id AND p.member_id = w.user_id)) "
+            + "AND NOT EXISTS (SELECT 1 FROM want_signups s WHERE s.want_id = w.id AND s.user_id = r.recipient_id) "
+            + "ON CONFLICT (want_id, recipient_id) WHERE type = 'WANT_POSTED' DO NOTHING", nativeQuery = true)
+    void announceToCircle(@Param("wantId") Long wantId, @Param("actorId") Long actorId);
+
+    /**
      * Marks a recipient's notifications read, up to and including an id. The
      * bound is what the recipient was shown, so one that arrived since stays
      * unread. Already-read rows keep the time they were first read.

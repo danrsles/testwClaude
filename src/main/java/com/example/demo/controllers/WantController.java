@@ -47,14 +47,15 @@ public class WantController {
     @ResponseStatus(HttpStatus.CREATED)
     public WantResponse create(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody WantRequest request) {
         return wantService.create(request.message(), request.category(), request.capacityOnCreate(),
-                request.expiresAt(), Identities.of(jwt));
+                request.expiresAt(), request.circleId(), Identities.of(jwt));
     }
 
     @PutMapping("/{id}")
     public WantResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
             @Valid @RequestBody WantRequest request) {
         return wantService.update(id, request.message(), request.category(), request.capacity(),
-                request.openInvite(), request.expiresAt(), request.noDeadline(), Identities.of(jwt));
+                request.openInvite(), request.expiresAt(), request.noDeadline(), request.circleId(),
+                request.allFollowers(), Identities.of(jwt));
     }
 
     @PostMapping("/{id}/close")
