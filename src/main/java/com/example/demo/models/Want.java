@@ -63,6 +63,15 @@ public class Want {
     @Column(name = "ended_at")
     private Instant endedAt;
 
+    /**
+     * The circle it was posted to, or null for General: all the poster's
+     * followers. Eager, like user, because the response shows its name; the
+     * feed queries fetch-join it so that costs no extra query.
+     */
+    @ManyToOne
+    @JoinColumn(name = "circle_id")
+    private Circle circle;
+
     protected Want() {
     }
 
@@ -178,5 +187,14 @@ public class Want {
 
     public void end(Instant at) {
         this.endedAt = at;
+    }
+
+    public Circle getCircle() {
+        return circle;
+    }
+
+    /** Null moves it to General. */
+    public void setCircle(Circle circle) {
+        this.circle = circle;
     }
 }

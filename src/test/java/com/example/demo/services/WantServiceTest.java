@@ -8,10 +8,12 @@ import java.util.Optional;
 
 import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
+import com.example.demo.models.Circle;
 import com.example.demo.models.NotificationType;
 import com.example.demo.models.User;
 import com.example.demo.models.Want;
 import com.example.demo.models.WantStatus;
+import com.example.demo.repositories.CircleRepository;
 import com.example.demo.repositories.WantRepository;
 import com.example.demo.repositories.WantSignupRepository;
 
@@ -43,6 +45,9 @@ class WantServiceTest {
     private WantSignupRepository wantSignupRepository;
 
     @Mock
+    private CircleRepository circleRepository;
+
+    @Mock
     private UserService userService;
 
     @Mock
@@ -55,7 +60,8 @@ class WantServiceTest {
 
     @BeforeEach
     void setUp() {
-        wantService = new WantService(wantRepository, wantSignupRepository, userService, notificationService,
+        wantService = new WantService(wantRepository, wantSignupRepository, circleRepository, userService,
+                notificationService,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
@@ -484,6 +490,71 @@ class WantServiceTest {
 
         wantService.update(1L, "Pizza night", Category.FOOD, null, null, null, null, DANI);
 
+        then(notificationService).should(never()).announce(any(), any());
+    }
+
+    private final User alex = withId(new User("alex", "user_alex"), 2L);
+
+    /** Circle 7, "Climbing", owned by the given user, found live under the shared lock. */
+    private Circle circleOwnedBy(User owner) {
+        Circle circle = new Circle(owner, "Climbing");
+        ReflectionTestUtils.setField(circle, "id", 7L);
+        given(circleRepository.findLiveForShare(7L)).willReturn(Optional.of(circle));
+        return circle;
+    }
+
+    @Test
+    void postingToACircleYouAreNotInIsNotFound() {
+        // 404, not 403: someone outside a circle learns nothing about it.
+        given(userService.current(DANI)).willReturn(dani);
+        circleOwnedBy(alex);
+        given(circleRepository.isMember(7L, 1L)).willReturn(false);
+
+        assertThatThrownBy(() -> wantService.create("Bouldering", Category.GAME, 4, null, 7L, DANI))
+                .isInstanceOf(CircleNotFoundException.class);
+        then(wantRepository).should(never()).save(any());
+    }
+
+    @Test
+    void editingWithTheSameCircleSkipsTheMembershipCheck() {
+        // So a poster who has left the circle can still edit their own want.
+        Want want = new Want("Bouldering", Category.GAME, dani, 4);
+        Circle climbing = new Circle(alex, "Climbing");
+        ReflectionTestUtils.setField(climbing, "id", 7L);
+        want.setCircle(climbing);
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+
+        wantService.update(1L, "Bouldering Sunday", Category.GAME, null, null, null, null, 7L, null, DANI);
+
+        assertThat(want.getCircle()).isSameAs(climbing);
+        then(circleRepository).should(never()).findLiveForShare(any());
+        then(circleRepository).should(never()).isMember(any(), any());
+    }
+
+    @Test
+    void allFollowersMovesAWantBackToGeneral() {
+        Want want = new Want("Bouldering", Category.GAME, dani, 4);
+        want.setCircle(new Circle(dani, "Climbing"));
+        given(wantRepository.findByIdForUpdate(1L)).willReturn(Optional.of(want));
+        given(wantRepository.saveAndFlush(want)).willReturn(want);
+
+        WantResponse saved = wantService.update(1L, "Bouldering", Category.GAME, null, null, null, null, null, true,
+                DANI);
+
+        assertThat(want.getCircle()).isNull();
+        assertThat(saved.circle()).isNull();
+    }
+
+    @Test
+    void aCircleWantIsAnnouncedToTheCircleNotToFollowers() {
+        given(userService.current(DANI)).willReturn(dani);
+        circleOwnedBy(dani);
+        given(wantRepository.save(any(Want.class))).willAnswer(call -> savedAs(call.getArgument(0), 9L));
+
+        wantService.create("Bouldering", Category.GAME, 4, null, 7L, DANI);
+
+        then(notificationService).should().announceToCircle(9L, dani);
         then(notificationService).should(never()).announce(any(), any());
     }
 }

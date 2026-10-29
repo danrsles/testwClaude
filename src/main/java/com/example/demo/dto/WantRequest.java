@@ -35,7 +35,9 @@ public record WantRequest(
         @Min(1) Integer capacity,
         Boolean openInvite,
         @Future Instant expiresAt,
-        Boolean noDeadline) {
+        Boolean noDeadline,
+        Long circleId,
+        Boolean allFollowers) {
 
     /** The capacity for a new want: none for an open invite, else 1, the owner alone, unless one was given. */
     public Integer capacityOnCreate() {
@@ -55,5 +57,14 @@ public record WantRequest(
     @AssertTrue(message = "give expiresAt or noDeadline, not both")
     public boolean isDeadlineOrNoDeadline() {
         return expiresAt == null || !Boolean.TRUE.equals(noDeadline);
+    }
+
+    /**
+     * A circle and allFollowers together fail validation: one moves the want
+     * into a circle, the other back to General. Left out, the audience stays.
+     */
+    @AssertTrue(message = "give circleId or allFollowers, not both")
+    public boolean isCircleOrAllFollowers() {
+        return circleId == null || !Boolean.TRUE.equals(allFollowers);
     }
 }

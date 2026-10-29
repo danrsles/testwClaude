@@ -26,7 +26,7 @@ import com.example.demo.models.WantStatus;
  */
 public record WantResponse(Long id, String message, Category category, Long userId, String username,
         String imageUrl, Integer capacity, int seatsTaken, List<UserSummary> lineup, boolean signedUp,
-        WantStatus status, boolean happening, Instant expiresAt) {
+        WantStatus status, boolean happening, Instant expiresAt, CircleSummary circle) {
 
     /** now decides whether the deadline has passed. */
     public static WantResponse from(Want want, List<UserSummary> lineup, boolean signedUp, Instant now) {
@@ -43,6 +43,7 @@ public record WantResponse(Long id, String message, Category category, Long user
                 signedUp,
                 want.getStatus(now),
                 want.isHappening(),
-                want.getExpiresAt());
+                want.getExpiresAt(),
+                want.getCircle() == null ? null : CircleSummary.from(want.getCircle()));
     }
 }

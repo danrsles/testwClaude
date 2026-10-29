@@ -16,32 +16,47 @@ import org.springframework.data.repository.query.Param;
 
 public interface WantRepository extends JpaRepository<Want, Long> {
 
-    /** A user's feed: their own wants and those of everyone they follow, never cancelled ones. */
-    @Query("""
-            select w from Want w
-            where w.cancelledAt is null
+    /**
+     * Who can see a want, shared by the feed, the category feed and isInFeed
+     * (so signups and withdrawals too). Needs the want as w, its circle
+     * left-joined as c, and :userId. A user sees a want, unless it is
+     * cancelled, when:
+     * - they posted it; or
+     * - it has no circle (General) and they follow the poster; or
+     * - its circle is not deleted, they own it or are in it, and the poster
+     *   still owns it or is in it, so removing someone hides their wants.
+     * NotificationRepository.announce and announceToCircle repeat this in
+     * SQL; WantAnnounceIT checks that everyone they tell can see the want.
+     */
+    String VISIBLE_TO_USER = """
+            w.cancelledAt is null
               and (w.user.id = :userId
-                   or w.user.id in (select f.followee.id from Follow f where f.follower.id = :userId))
-            order by w.id""")
+                   or (c is null
+                       and w.user.id in (select f.followee.id from Follow f where f.follower.id = :userId))
+                   or (c is not null and c.archivedAt is null
+                       and (c.owner.id = :userId
+                            or exists (select m from CircleMember m
+                                       where m.id.circleId = c.id and m.id.memberId = :userId))
+                       and (c.owner.id = w.user.id
+                            or exists (select p from CircleMember p
+                                       where p.id.circleId = c.id and p.id.memberId = w.user.id))))""";
+
+    /**
+     * A user's feed, by VISIBLE_TO_USER: their own wants, General wants of
+     * everyone they follow, and wants in circles they own or are in. The
+     * circle is fetched in the same query, for its name in the response.
+     */
+    @Query("select w from Want w left join fetch w.circle c where " + VISIBLE_TO_USER + " order by w.id")
     List<Want> findFeed(@Param("userId") Long userId);
 
     /** As findFeed, narrowed to one category. */
-    @Query("""
-            select w from Want w
-            where w.category = :category
-              and w.cancelledAt is null
-              and (w.user.id = :userId
-                   or w.user.id in (select f.followee.id from Follow f where f.follower.id = :userId))
-            order by w.id""")
+    @Query("select w from Want w left join fetch w.circle c where w.category = :category and "
+            + VISIBLE_TO_USER + " order by w.id")
     List<Want> findFeedByCategory(@Param("userId") Long userId, @Param("category") Category category);
 
-    /** Whether a want is in a user's feed: theirs, or by someone they follow, and not cancelled. */
-    @Query("""
-            select case when count(w) > 0 then true else false end from Want w
-            where w.id = :wantId
-              and w.cancelledAt is null
-              and (w.user.id = :userId
-                   or w.user.id in (select f.followee.id from Follow f where f.follower.id = :userId))""")
+    /** Whether a want is in a user's feed, by VISIBLE_TO_USER. */
+    @Query("select case when count(w) > 0 then true else false end from Want w left join w.circle c "
+            + "where w.id = :wantId and " + VISIBLE_TO_USER)
     boolean isInFeed(@Param("wantId") Long wantId, @Param("userId") Long userId);
 
     /**

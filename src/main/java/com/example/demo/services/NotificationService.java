@@ -64,6 +64,16 @@ public class NotificationService {
         notificationRepository.announce(wantId, actor.getId());
     }
 
+    /**
+     * As announce, for a want posted to a circle: tells its owner and
+     * members, not the poster's followers, whether or not they muted the
+     * poster. Joins the caller's transaction.
+     */
+    @Transactional
+    public void announceToCircle(Long wantId, User actor) {
+        notificationRepository.announceToCircle(wantId, actor.getId());
+    }
+
     /** Your 50 newest notifications, newest first, read or not. */
     @Transactional
     public List<Notification> mine(ClerkIdentity who) {

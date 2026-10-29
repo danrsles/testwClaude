@@ -47,6 +47,9 @@ class WantAnnounceIT {
     @Autowired
     private WantRepository wantRepository;
 
+    @Autowired
+    private CircleService circleService;
+
     // A spy, so one test can make announcing fail; every other call is real.
     @MockitoSpyBean
     private NotificationService notificationService;
@@ -207,6 +210,46 @@ class WantAnnounceIT {
 
         assertThat(posted(alex)).singleElement()
                 .extracting(Notification::getWantMessage).isEqualTo("Pizza Friday");
+    }
+
+    /**
+     * The circle half of everyoneToldCanSeeTheWant: announcing a circle's
+     * want is its own statement, so it gets its own agreement check.
+     */
+    @Test
+    void everyoneToldAboutACircleWantCanSeeIt() {
+        ClerkIdentity dani = person("dani");
+        ClerkIdentity alex = follower("alex", dani);
+        ClerkIdentity sam = follower("sam", dani);
+        follower("jordan", sam);
+        Long climbing = circleService.create("Climbing", dani).getId();
+        circleService.addMember(climbing, idOf(alex), dani);
+        circleService.addMember(climbing, idOf(sam), dani);
+
+        Long bouldering = wantService.create("Bouldering Saturday", Category.GAME, 4, null, climbing, sam).id();
+
+        List<Long> told = jdbc.queryForList(
+                "select recipient_id from notifications where want_id = ? and type = 'WANT_POSTED'", Long.class,
+                bouldering);
+        // dani and alex: the circle but sam. Not jordan, who follows sam but isn't in it.
+        assertThat(told).containsExactlyInAnyOrder(idOf(dani), idOf(alex));
+        assertThat(told).allSatisfy(recipient -> assertThat(wantRepository.isInFeed(bouldering, recipient)).isTrue());
+    }
+
+    @Test
+    void aCircleWantsAnnouncementNamesTheCircle() {
+        // alex may not follow the poster, so the notification says which circle it came through.
+        ClerkIdentity dani = person("dani");
+        ClerkIdentity alex = follower("alex", dani);
+        Long climbing = circleService.create("Climbing", dani).getId();
+        circleService.addMember(climbing, idOf(alex), dani);
+
+        wantService.create("Bouldering Saturday", Category.GAME, 4, null, climbing, dani);
+
+        assertThat(posted(alex)).singleElement().satisfies(n -> {
+            assertThat(n.getCircleId()).isEqualTo(climbing);
+            assertThat(n.getCircleName()).isEqualTo("Climbing");
+        });
     }
 
     @Test

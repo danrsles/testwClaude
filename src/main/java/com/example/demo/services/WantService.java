@@ -11,10 +11,12 @@ import java.util.Objects;
 import com.example.demo.dto.UserSummary;
 import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
+import com.example.demo.models.Circle;
 import com.example.demo.models.NotificationType;
 import com.example.demo.models.User;
 import com.example.demo.models.Want;
 import com.example.demo.models.WantStatus;
+import com.example.demo.repositories.CircleRepository;
 import com.example.demo.repositories.WantRepository;
 import com.example.demo.repositories.WantSignupRepository;
 
@@ -36,14 +38,17 @@ public class WantService {
 
     private final WantRepository wantRepository;
     private final WantSignupRepository wantSignupRepository;
+    private final CircleRepository circleRepository;
     private final UserService userService;
     private final NotificationService notificationService;
     private final Clock clock;
 
     public WantService(WantRepository wantRepository, WantSignupRepository wantSignupRepository,
-            UserService userService, NotificationService notificationService, Clock clock) {
+            CircleRepository circleRepository, UserService userService, NotificationService notificationService,
+            Clock clock) {
         this.wantRepository = wantRepository;
         this.wantSignupRepository = wantSignupRepository;
+        this.circleRepository = circleRepository;
         this.userService = userService;
         this.notificationService = notificationService;
         this.clock = clock;
@@ -70,24 +75,38 @@ public class WantService {
         return withSeats(wantRepository.findFeedByCategory(me.getId(), category), me);
     }
 
-    /**
-     * Creates a want with its owner in the first seat, and tells the owner it
-     * was created. If anyone else can join, the owner's followers are told
-     * too (WANT_POSTED). expiresAt is its deadline, or null for none; the
-     * controller has already refused one in the past.
-     */
+    /** As the create below, for a General want: all your followers. */
     @Transactional
     public WantResponse create(String message, Category category, Integer capacity, Instant expiresAt,
             ClerkIdentity who) {
+        return create(message, category, capacity, expiresAt, null, who);
+    }
+
+    /**
+     * Creates a want with its owner in the first seat, and tells the owner it
+     * was created. expiresAt is its deadline, or null for none; the
+     * controller has already refused one in the past.
+     *
+     * circleId posts it to a circle you own or are in (404 otherwise, or if
+     * the circle was deleted); null posts it to General. If anyone else can
+     * join, its audience is told (WANT_POSTED): your followers for General,
+     * the circle's owner and members for a circle.
+     */
+    @Transactional
+    public WantResponse create(String message, Category category, Integer capacity, Instant expiresAt,
+            Long circleId, ClerkIdentity who) {
         User me = userService.current(who);
         Want created = new Want(message, category, me, capacity);
         created.setExpiresAt(expiresAt);
+        if (circleId != null) {
+            created.setCircle(requirePostable(circleId, me));
+        }
         Want want = wantRepository.save(created);
         wantSignupRepository.signUpIfAbsent(want.getId(), me.getId());
         notificationService.notify(me.getId(), me, NotificationType.WANT_CREATED, want.getId());
         // The owner's seat is the only one taken so far.
         if (want.getCapacity() == null || want.getCapacity() > 1) {
-            notificationService.announce(want.getId(), me);
+            announce(want.getId(), want);
         }
         return withSeats(want, me);
     }
@@ -110,14 +129,21 @@ public class WantService {
      * so it cannot be edited. A deadline that changed tells the lineup
      * (WANT_DEADLINE_CHANGED); the same one again tells nobody.
      *
-     * While a seat is free, every edit announces the want to followers not
-     * yet told (WANT_POSTED), so a want whose capacity was raised from 1, or
-     * someone who followed since, is caught on the next edit. Nobody is told
-     * twice.
+     * circleId moves it into a circle the owner owns or is in (404
+     * otherwise), and allFollowers true moves it back to General. Left out,
+     * or the circle it is already in, it stays where it is without checking
+     * membership, so a poster who left the circle can still edit it. Moving
+     * tells the lineup nothing.
+     *
+     * While a seat is free, every edit announces the want to its audience
+     * not yet told (WANT_POSTED), so a want whose capacity was raised from 1,
+     * someone who followed or joined since, or a want just moved, is caught
+     * on the next edit. Nobody is told twice.
      */
     @Transactional
     public WantResponse update(Long wantId, String message, Category category, Integer capacity,
-            Boolean openInvite, Instant expiresAt, Boolean noDeadline, ClerkIdentity who) {
+            Boolean openInvite, Instant expiresAt, Boolean noDeadline, Long circleId, Boolean allFollowers,
+            ClerkIdentity who) {
         Want want = requireOwned(wantId, who.clerkId());
         Instant now = clock.instant();
         requireNotFinal(want, now);
@@ -149,6 +175,11 @@ public class WantService {
             want.setCapacity(capacity);
         }
         want.setExpiresAt(deadline);
+        if (Boolean.TRUE.equals(allFollowers)) {
+            want.setCircle(null);
+        } else if (circleId != null && (want.getCircle() == null || !circleId.equals(want.getCircle().getId()))) {
+            want.setCircle(requirePostable(circleId, want.getUser()));
+        }
         // Flushed now, because notifyLineup copies the new message from the
         // table in SQL, not from this entity.
         Want saved = wantRepository.saveAndFlush(want);
@@ -168,7 +199,7 @@ public class WantService {
         // Only an active want gets this far, and the row lock keeps the count exact.
         Integer seats = saved.getCapacity();
         if (seats == null || wantSignupRepository.countByWantId(wantId) < seats) {
-            notificationService.announce(wantId, saved.getUser());
+            announce(wantId, saved);
         }
         return withSeats(saved, saved.getUser());
     }
@@ -321,6 +352,36 @@ public class WantService {
                     return WantResponse.from(want, lineup, signedUp, now);
                 })
                 .toList();
+    }
+
+    /** General update, as before circles: the audience stays where it is. */
+    @Transactional
+    public WantResponse update(Long wantId, String message, Category category, Integer capacity,
+            Boolean openInvite, Instant expiresAt, Boolean noDeadline, ClerkIdentity who) {
+        return update(wantId, message, category, capacity, openInvite, expiresAt, noDeadline, null, null, who);
+    }
+
+    /**
+     * A circle the poster may post to: one they own or are in, not deleted;
+     * otherwise 404. Takes FOR SHARE on the circle, so a post waits for a
+     * removal or a delete in progress, then sees its result.
+     */
+    private Circle requirePostable(Long circleId, User poster) {
+        Circle circle = circleRepository.findLiveForShare(circleId)
+                .orElseThrow(() -> new CircleNotFoundException(circleId));
+        if (!circle.isOwnedBy(poster.getId()) && !circleRepository.isMember(circleId, poster.getId())) {
+            throw new CircleNotFoundException(circleId);
+        }
+        return circle;
+    }
+
+    /** Tells the want's audience, not yet told, that it is there to join: its circle, or the poster's followers. */
+    private void announce(Long wantId, Want want) {
+        if (want.getCircle() != null) {
+            notificationService.announceToCircle(wantId, want.getUser());
+        } else {
+            notificationService.announce(wantId, want.getUser());
+        }
     }
 
     /**
