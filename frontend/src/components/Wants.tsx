@@ -1,10 +1,11 @@
-﻿import { useId, useReducer, useRef, useState } from 'react'
+﻿import { useEffect, useId, useReducer, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { SubmitEvent } from 'react'
+import { useCircles } from '../hooks/useCircles'
 import { useMe } from '../hooks/useMe'
 import { useOnPictureChange } from '../hooks/useOnPictureChange'
 import { useWants } from '../hooks/useWants'
-import type { DeadlineChange, SeatsChange } from '../hooks/useWants'
+import type { AudienceChange, DeadlineChange, SeatsChange } from '../hooks/useWants'
 import { CATEGORIES } from '../types/wants'
 import type { Category, Want } from '../types/wants'
 import Avatar from './Avatar'
@@ -50,6 +51,15 @@ function keepLabel(want: Want): string {
     : 'No deadline'
 }
 
+/** A select's value for an audience: '' for General, else the circle's id. */
+function audienceValue(circleId: number | null): string {
+  return circleId === null ? '' : String(circleId)
+}
+
+function audienceOf(value: string): number | null {
+  return value === '' ? null : Number(value)
+}
+
 /**
  * The whole wants screen: the add form, the category filter, and the list,
  * where the signed-in user's own rows can be edited, closed, reopened,
@@ -68,6 +78,9 @@ export default function Wants() {
   // controls that would fail.
   const { me } = useMe()
   const isMine = (want: Want) => me !== null && want.userId === me.id
+  // The circles you own or are in, any of which you may post to. Until they
+  // load, or if they fail to, General is the only audience offered.
+  const { circles } = useCircles()
 
   const [message, setMessage] = useState('')
   const [category, setCategory] = useState<Category>('FOOD')
@@ -75,11 +88,14 @@ export default function Wants() {
   const [capacity, setCapacity] = useState('1')
   const [openInvite, setOpenInvite] = useState(false)
   const [deadline, setDeadline] = useState<DeadlineDraft>(NO_DEADLINE)
+  // The circle to post to, or null for General.
+  const [audience, setAudience] = useState<number | null>(null)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [draft, setDraft] = useState('')
   const [draftCapacity, setDraftCapacity] = useState('')
   const [draftOpen, setDraftOpen] = useState(false)
   const [draftDeadline, setDraftDeadline] = useState<DeadlineDraft>(NO_DEADLINE)
+  const [draftAudience, setDraftAudience] = useState<number | null>(null)
   // Reopen asks for an optional new deadline first, in place of the row's buttons.
   const [reopeningId, setReopeningId] = useState<number | null>(null)
   const [reopenDeadline, setReopenDeadline] = useState<DeadlineDraft>(NO_DEADLINE)
@@ -87,6 +103,7 @@ export default function Wants() {
   // button takes it back when it mounts again.
   const refocusId = useRef<number | null>(null)
   const openInviteHint = useId()
+  const audienceHint = useId()
   // Nothing re-renders as the clock passes a deadline, so a pick can go stale
   // with its button still enabled. A refused submit re-renders, and the picker
   // then says why.
@@ -99,6 +116,33 @@ export default function Wants() {
       button.focus()
     }
   }
+
+  // The circle picked on Add has since gone from your list, deleted or left.
+  // Never fall back to General, the widest audience: Add waits for a choice.
+  const audienceGone = audience !== null && circles !== null && !circles.some((c) => c.id === audience)
+
+  // The audience picked in Edit, or the want's own if the circle picked has
+  // since gone, so a failure never widens who sees it. General is always
+  // there, and its own circle counts even after you leave it.
+  const draftTo = (want: Want) =>
+    draftAudience === null ||
+    draftAudience === (want.circle?.id ?? null) ||
+    circles?.some((c) => c.id === draftAudience)
+      ? draftAudience
+      : (want.circle?.id ?? null)
+
+  // Add turns disabled when its circle goes, which drops its focus to the
+  // page. The select that needs changing takes it instead, and a screen
+  // reader reads why. Only from Add or nowhere, so typing elsewhere is never
+  // interrupted, as on a refetch when the window regains focus.
+  const audienceSelect = useRef<HTMLSelectElement>(null)
+  const addButton = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const focused = document.activeElement
+    if (audienceGone && (focused === addButton.current || focused === document.body)) {
+      audienceSelect.current?.focus()
+    }
+  }, [audienceGone])
 
   // A want that closed while its row was open, such as at its deadline, can't
   // be edited, so its row leaves edit mode once the reload says so.
@@ -120,13 +164,14 @@ export default function Wants() {
     const count = openInvite ? null : seats(capacity, 1)
     const closes = deadlineOf(deadline)
     if (closes === 'invalid') return recheck()
-    if (!text || (!openInvite && count === null)) return
+    if (!text || (!openInvite && count === null) || audienceGone) return
     // Only clear the inputs if the API accepted them, so a failure keeps them.
-    if (await add(text, category, count, closes?.toISOString())) {
+    if (await add(text, category, count, closes?.toISOString(), audience ?? undefined)) {
       setMessage('')
       setCapacity('1')
       setOpenInvite(false)
       setDeadline(NO_DEADLINE)
+      setAudience(null)
     }
   }
 
@@ -153,11 +198,18 @@ export default function Wants() {
       // Send the capacity only when it changed; left out, it stays as it is.
       if (count !== want.capacity) change = { capacity: count }
     }
+    // Sent only when it changed: left out, the want keeps its audience, even a
+    // circle you have since left.
+    let audienceChange: AudienceChange | undefined
+    const to = draftTo(want)
+    if (to !== (want.circle?.id ?? null)) {
+      audienceChange = to === null ? { allFollowers: true } : { circleId: to }
+    }
     // Set first: if the save is refused because the want closed, the reload
     // ends edit mode and Reopen, mounting, takes focus. If it is still open,
     // the row stays open so the edit is not silently lost.
     refocusId.current = want.id
-    if (await update(want.id, text, want.category, change, deadlineChange)) stopEditing(want.id)
+    if (await update(want.id, text, want.category, change, deadlineChange, audienceChange)) stopEditing(want.id)
   }
 
   async function confirmReopen(want: Want) {
@@ -210,6 +262,30 @@ export default function Wants() {
             </option>
           ))}
         </select>
+        {/* General, everyone who follows you, first and the default. Capped in
+            width, so a long circle name can't push the form off a phone. */}
+        <select
+          ref={audienceSelect}
+          value={audienceValue(audience)}
+          onChange={(e) => setAudience(audienceOf(e.target.value))}
+          aria-label="Audience"
+          aria-describedby={audienceGone ? audienceHint : undefined}
+          title="Who sees it"
+          className="field max-w-full min-w-0 px-3 py-2 sm:max-w-48"
+        >
+          {/* Shown in place of a gone circle, so even General is a change, and a deliberate one. */}
+          {audienceGone && (
+            <option value={audience} disabled>
+              Choose who sees it
+            </option>
+          )}
+          <option value="">General (all followers)</option>
+          {circles?.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
         <input
           type="number"
           min={1}
@@ -237,14 +313,23 @@ export default function Wants() {
         </label>
         <DeadlinePicker label="Deadline" value={deadline} onChange={setDeadline} />
         <button
+          ref={addButton}
           type="submit"
           disabled={
-            !message.trim() || (!openInvite && seats(capacity, 1) === null) || deadlineOf(deadline) === 'invalid'
+            !message.trim() ||
+            (!openInvite && seats(capacity, 1) === null) ||
+            deadlineOf(deadline) === 'invalid' ||
+            audienceGone
           }
           className="btn-primary px-5 py-2"
         >
           Add
         </button>
+        {audienceGone && (
+          <p id={audienceHint} className="basis-full text-sm text-red-700 dark:text-red-400">
+            That circle is gone. Choose who sees it.
+          </p>
+        )}
       </form>
 
       <nav className="mb-5 flex flex-wrap gap-1.5">
@@ -333,6 +418,24 @@ export default function Wants() {
                     Open invite
                   </label>
                   <DeadlinePicker label="Edit deadline" value={draftDeadline} onChange={setDraftDeadline} />
+                  <select
+                    value={audienceValue(draftTo(want))}
+                    onChange={(e) => setDraftAudience(audienceOf(e.target.value))}
+                    aria-label="Edit audience"
+                    title="Who sees it"
+                    className="field max-w-full min-w-0 px-2 py-1"
+                  >
+                    <option value="">General (all followers)</option>
+                    {/* Its own circle, even one you have left, so saving keeps it. */}
+                    {want.circle && !circles?.some((c) => c.id === want.circle?.id) && (
+                      <option value={want.circle.id}>{want.circle.name}</option>
+                    )}
+                    {circles?.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
                 </span>
               ) : (
                 <span className="flex-1 basis-40">{want.message}</span>
@@ -343,6 +446,14 @@ export default function Wants() {
                 <Avatar src={want.imageUrl} alt="" size={24} />
                 {want.username}
               </span>
+
+              {/* General wants get no pill: that is the default audience. */}
+              {want.circle && (
+                <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800 dark:bg-violet-950 dark:text-violet-300">
+                  <span className="sr-only">Circle: </span>
+                  {want.circle.name}
+                </span>
+              )}
 
               <span className="text-sm text-stone-500 tabular-nums dark:text-stone-400">
                 {want.capacity === null ? `${want.seatsTaken} going` : `${want.seatsTaken} / ${want.capacity} seats`}
@@ -465,6 +576,7 @@ export default function Wants() {
                             setDraftCapacity(String(want.capacity ?? want.seatsTaken))
                             setDraftOpen(want.capacity === null)
                             setDraftDeadline(draftOf(want.expiresAt))
+                            setDraftAudience(want.circle?.id ?? null)
                           }}
                           className="btn px-2.5 py-1.5 text-sm"
                         >

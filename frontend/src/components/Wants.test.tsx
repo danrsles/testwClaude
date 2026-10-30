@@ -1,8 +1,11 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getToken } from '@clerk/react'
+import { listCircles } from '../api/circles'
+import { HttpError } from '../api/http'
 import { getMe } from '../api/me'
 import {
   cancelWant,
@@ -39,6 +42,9 @@ vi.mock('../api/wants', () => ({
 
 vi.mock('../api/me', () => ({ getMe: vi.fn() }))
 
+// The audience select lists your circles; nothing else from api/circles is used here.
+vi.mock('../api/circles', () => ({ listCircles: vi.fn() }))
+
 // The signed-in user's Clerk picture, which a test can change to play the
 // part of the account menu, and the token call made when it changes.
 const clerk = vi.hoisted(() => ({
@@ -67,7 +73,7 @@ function want(
   category: Category = 'FOOD',
   owner = DANI,
   seats: Partial<
-    Pick<Want, 'capacity' | 'seatsTaken' | 'lineup' | 'signedUp' | 'status' | 'happening' | 'expiresAt'>
+    Pick<Want, 'capacity' | 'seatsTaken' | 'lineup' | 'signedUp' | 'status' | 'happening' | 'expiresAt' | 'circle'>
   > = {},
 ): Want {
   return {
@@ -84,9 +90,14 @@ function want(
     status: 'ACTIVE',
     happening: false,
     expiresAt: null,
+    circle: null,
     ...seats,
   }
 }
+
+// One circle dani owns and one sam owns that dani is in: both can be posted to.
+const FRIENDS = { id: 10, name: 'Friends', owner: DANI }
+const BOOK_CLUB = { id: 11, name: 'Book club', owner: SAM }
 
 /** The list item holding a want's message. */
 function row(message: string): HTMLElement {
@@ -94,19 +105,24 @@ function row(message: string): HTMLElement {
 }
 
 // Wants reads the signed-in user from useMe, so it renders inside the
-// provider, and links to People, so inside a router.
-function WantsScreen() {
+// provider, links to People, so inside a router, and reads your circles
+// through TanStack Query, so inside a fresh client per test.
+function WantsScreen({ client }: { client: QueryClient }) {
   return (
-    <MemoryRouter>
-      <MeProvider>
-        <Wants />
-      </MeProvider>
-    </MemoryRouter>
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <MeProvider>
+          <Wants />
+        </MeProvider>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 
 function renderWants() {
-  return render(<WantsScreen />)
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const result = render(<WantsScreen client={client} />)
+  return { ...result, rerender: () => result.rerender(<WantsScreen client={client} />) }
 }
 
 describe('Wants', () => {
@@ -114,6 +130,7 @@ describe('Wants', () => {
     vi.clearAllMocks()
     vi.mocked(getMe).mockResolvedValue(DANI)
     vi.mocked(getToken).mockResolvedValue('fresh-token')
+    vi.mocked(listCircles).mockResolvedValue([FRIENDS, BOOK_CLUB])
     clerk.user = { imageUrl: 'https://img.clerk.com/old.jpg' }
     vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown'), want(2, 'Dune Part Two', 'MOVIE')])
   })
@@ -779,7 +796,7 @@ describe('Wants', () => {
     expect(listWants).toHaveBeenCalledTimes(1)
 
     clerk.user = { imageUrl: 'https://img.clerk.com/new.jpg' }
-    rerender(<WantsScreen />)
+    rerender()
 
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
     expect(getToken).toHaveBeenCalledWith({ skipCache: true })
@@ -791,7 +808,7 @@ describe('Wants', () => {
     await screen.findByText('Ramen downtown')
 
     clerk.user = { imageUrl: 'https://img.clerk.com/old.jpg' }
-    rerender(<WantsScreen />)
+    rerender()
 
     expect(getToken).not.toHaveBeenCalled()
     expect(listWants).toHaveBeenCalledTimes(1)
@@ -1239,6 +1256,254 @@ describe('Wants', () => {
           .querySelector('time'),
       ).toHaveAttribute('dateTime', deadline)
       expect(within(row('Ramen downtown')).queryByText('Closed')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('audience', () => {
+    /** The option names of a select, in order. */
+    function options(select: HTMLElement): string[] {
+      return within(select)
+        .getAllByRole('option')
+        .map((o) => o.textContent ?? '')
+    }
+
+    /** Waits for the circles to load into the Add form's select. */
+    async function circlesLoaded() {
+      await within(screen.getByLabelText('Audience')).findByRole('option', { name: 'Friends' })
+    }
+
+    it('offers General first and selected, then your circles, as the audience', async () => {
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      const audience = screen.getByLabelText('Audience')
+      expect(options(audience)).toEqual(['General (all followers)', 'Friends', 'Book club'])
+      expect(audience).toHaveDisplayValue('General (all followers)')
+    })
+
+    it('adds a want to General by sending no circle', async () => {
+      vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD', capacity: 1 })
+    })
+
+    it('adds a want to the circle you pick', async () => {
+      vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos', 'FOOD', DANI, { circle: { id: 11, name: 'Book club' } }))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      // A circle you're in but don't own can be posted to as well.
+      await userEvent.selectOptions(screen.getByLabelText('Audience'), 'Book club')
+      await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD', capacity: 1, circleId: 11 })
+    })
+
+    it('resets the audience to General after adding', async () => {
+      vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos', 'FOOD', DANI, { circle: { id: 10, name: 'Friends' } }))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await userEvent.selectOptions(screen.getByLabelText('Audience'), 'Friends')
+      await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      await waitFor(() => expect(screen.getByLabelText('Want description')).toHaveValue(''))
+      expect(screen.getByLabelText('Audience')).toHaveDisplayValue('General (all followers)')
+    })
+
+    it('names the circle on a want posted to one', async () => {
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', SAM, { circle: { id: 11, name: 'Book club' } }),
+      ])
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      expect(within(row('Ramen downtown')).getByText('Book club')).toBeInTheDocument()
+    })
+
+    it('shows no circle pill on a General want', async () => {
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      // The circle names appear only as options in the Add form's select.
+      expect(within(row('Ramen downtown')).queryByText('Friends')).not.toBeInTheDocument()
+      expect(within(row('Ramen downtown')).queryByText('General')).not.toBeInTheDocument()
+    })
+
+    it("starts Edit on the want's current audience", async () => {
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { circle: { id: 10, name: 'Friends' } }),
+        want(2, 'Dune Part Two', 'MOVIE'),
+      ])
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+      expect(screen.getByLabelText('Edit audience')).toHaveDisplayValue('Friends')
+      await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+      await userEvent.click(within(row('Dune Part Two')).getByRole('button', { name: 'Edit' }))
+      expect(screen.getByLabelText('Edit audience')).toHaveDisplayValue('General (all followers)')
+    })
+
+    it('moves a want into a circle by sending its id', async () => {
+      vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+      await userEvent.selectOptions(screen.getByLabelText('Edit audience'), 'Friends')
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'FOOD', circleId: 10 })
+    })
+
+    it('moves a want back to General with allFollowers', async () => {
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { circle: { id: 10, name: 'Friends' } }),
+      ])
+      vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+      await userEvent.selectOptions(screen.getByLabelText('Edit audience'), 'General (all followers)')
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'FOOD', allFollowers: true })
+    })
+
+    it('sends no audience when Edit leaves it unchanged', async () => {
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { circle: { id: 10, name: 'Friends' } }),
+      ])
+      vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen uptown'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+      const editor = screen.getByLabelText('Edit want')
+      await userEvent.clear(editor)
+      await userEvent.type(editor, 'Ramen uptown')
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen uptown', category: 'FOOD' })
+    })
+
+    it("keeps a circle you've left as the edit's audience", async () => {
+      // Posted to a circle dani has since left, so it is not among their circles,
+      // but the API still lets them edit it, and the edit keeps the circle.
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { circle: { id: 12, name: 'Old crew' } }),
+      ])
+      vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+      const audience = screen.getByLabelText('Edit audience')
+      expect(audience).toHaveDisplayValue('Old crew')
+      expect(options(audience)).toEqual(['General (all followers)', 'Old crew', 'Friends', 'Book club'])
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'FOOD' })
+    })
+
+    it('still adds to General while your circles are loading or failed to load', async () => {
+      vi.mocked(listCircles).mockRejectedValue(new Error('offline'))
+      vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      expect(options(screen.getByLabelText('Audience'))).toEqual(['General (all followers)'])
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD', capacity: 1 })
+    })
+
+    it("says you can't post to a circle that is gone, and reloads your circles", async () => {
+      // The API's 404 body is Spring's JSON, which must not reach the screen.
+      vi.mocked(createWant).mockRejectedValue(new HttpError(404, '{"status":404,"error":"Not Found"}'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+      expect(listCircles).toHaveBeenCalledTimes(1)
+
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await userEvent.selectOptions(screen.getByLabelText('Audience'), 'Friends')
+      await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        "You can't post to that circle any more. It was deleted, or you're no longer in it.",
+      )
+      await waitFor(() => expect(listCircles).toHaveBeenCalledTimes(2))
+      expect(screen.getByLabelText('Want description')).toHaveValue('Tacos')
+    })
+
+    it('blocks Add, and says why, once the circle you picked is gone, rather than posting to General', async () => {
+      vi.mocked(createWant).mockRejectedValue(new HttpError(404, '{"status":404}'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await userEvent.selectOptions(screen.getByLabelText('Audience'), 'Friends')
+      // Friends was deleted meanwhile: the refetch after the 404 no longer lists it.
+      vi.mocked(listCircles).mockResolvedValue([BOOK_CLUB])
+      await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      const audience = screen.getByLabelText('Audience')
+      await waitFor(() => expect(audience).toHaveAccessibleDescription('That circle is gone. Choose who sees it.'))
+      expect(audience).not.toHaveDisplayValue('General (all followers)')
+      expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+      // Disabling Add drops its focus, so the select that needs changing takes it.
+      expect(audience).toHaveFocus()
+
+      // Choosing on purpose, even General, unblocks it.
+      await userEvent.selectOptions(audience, 'General (all followers)')
+      expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled()
+      // Back to its usual description, the select's title.
+      expect(audience).toHaveAccessibleDescription('Who sees it')
+    })
+
+    it("falls back to the want's own audience, never General, when the circle picked in Edit is gone", async () => {
+      vi.mocked(listWants).mockResolvedValue([
+        want(1, 'Ramen downtown', 'FOOD', DANI, { circle: { id: 11, name: 'Book club' } }),
+      ])
+      vi.mocked(updateWant).mockRejectedValueOnce(new HttpError(404, '{"status":404}'))
+      vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+      await circlesLoaded()
+
+      await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Edit' }))
+      await userEvent.selectOptions(screen.getByLabelText('Edit audience'), 'Friends')
+      vi.mocked(listCircles).mockResolvedValue([BOOK_CLUB])
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(updateWant).toHaveBeenLastCalledWith(1, { message: 'Ramen downtown', category: 'FOOD', circleId: 10 })
+      await waitFor(() => expect(screen.getByLabelText('Edit audience')).toHaveDisplayValue('Book club'))
+
+      // Saving again keeps it where it was, rather than resending the gone circle.
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+      expect(updateWant).toHaveBeenLastCalledWith(1, { message: 'Ramen downtown', category: 'FOOD' })
     })
   })
 })
