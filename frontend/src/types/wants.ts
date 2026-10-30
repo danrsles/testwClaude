@@ -61,6 +61,14 @@ export interface Want {
   happening: boolean
   /** The deadline, ISO 8601 in UTC; null for none. Once it has passed, status is already CLOSED. */
   expiresAt: string | null
+  /** The circle it was posted to, which decides who sees it; null for General, everyone who follows the owner. */
+  circle: CircleSummary | null
+}
+
+/** A want's circle as its audience sees it: no owner, no members. */
+export interface CircleSummary {
+  id: number
+  name: string
 }
 
 /** The owner is whoever is signed in, so there is no userId. */
@@ -79,6 +87,13 @@ export interface WantRequest {
   expiresAt?: string
   /** True removes the deadline. Never sent together with expiresAt: that is a 400. */
   noDeadline?: boolean
+  /**
+   * Posts it to a circle you own or are in (404 otherwise, or if deleted).
+   * Left out, a new want is General and an edit keeps its audience.
+   */
+  circleId?: number
+  /** True moves it back to General. Never sent together with circleId: that is a 400. */
+  allFollowers?: boolean
 }
 
 /** What signing up or withdrawing returns: the want's seats after the change. */
