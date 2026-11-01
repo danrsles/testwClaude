@@ -25,3 +25,7 @@ frontend/dist/
 
 # Playwright MCP snapshots, logs and UI review screenshots
 .playwright-mcp/
+
+# Load test: the signing key and the tokens made from it (loadtest/make-tokens.mjs)
+loadtest/keys/
+loadtest/tokens.json
