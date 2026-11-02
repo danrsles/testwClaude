@@ -42,16 +42,24 @@ public interface WantRepository extends JpaRepository<Want, Long> {
                                        where p.id.circleId = c.id and p.id.memberId = w.user.id))))""";
 
     /**
-     * A user's feed, by VISIBLE_TO_USER: their own wants, General wants of
-     * everyone they follow, and wants in circles they own or are in. The
-     * circle is fetched in the same query, for its name in the response.
+     * The start of both feed queries. Want.user and Circle.owner are eager,
+     * so anything not fetched here costs a query of its own per owner after
+     * the list arrives: N+1, growing with the people you follow
+     * (WantFeedQueriesIT). The circle is fetched for its name in the
+     * response. Each is a single row per want, so the joins never multiply
+     * the rows; lineups, a collection, are WantSignupRepository.findLineups.
      */
-    @Query("select w from Want w left join fetch w.circle c where " + VISIBLE_TO_USER + " order by w.id")
+    String FEED = "select w from Want w join fetch w.user left join fetch w.circle c left join fetch c.owner ";
+
+    /**
+     * A user's feed, by VISIBLE_TO_USER: their own wants, General wants of
+     * everyone they follow, and wants in circles they own or are in.
+     */
+    @Query(FEED + "where " + VISIBLE_TO_USER + " order by w.id")
     List<Want> findFeed(@Param("userId") Long userId);
 
     /** As findFeed, narrowed to one category. */
-    @Query("select w from Want w left join fetch w.circle c where w.category = :category and "
-            + VISIBLE_TO_USER + " order by w.id")
+    @Query(FEED + "where w.category = :category and " + VISIBLE_TO_USER + " order by w.id")
     List<Want> findFeedByCategory(@Param("userId") Long userId, @Param("category") Category category);
 
     /** Whether a want is in a user's feed, by VISIBLE_TO_USER. */
