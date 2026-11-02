@@ -23,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Limit;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -245,12 +246,36 @@ class WantServiceTest {
                 .isInstanceOf(WantNotFoundException.class);
     }
 
+    /** The whole feed, as findAll and findByCategory read it: from the newest, no limit. */
+    private static final Long NEWEST = Long.MAX_VALUE;
+
+    private static final Limit ALL = Limit.unlimited();
+
+    @Test
+    void readsAPageOlderThanTheCursor() {
+        given(userService.current(DANI)).willReturn(dani);
+
+        wantService.findPage(DANI, null, 40L, 5);
+
+        then(wantRepository).should().findFeed(1L, List.of(1L), List.of(), 40L, Limit.of(5));
+    }
+
+    @Test
+    void readsTheFirstPageFromTheNewest() {
+        given(userService.current(DANI)).willReturn(dani);
+
+        wantService.findPage(DANI, Category.FOOD, null, 20);
+
+        then(wantRepository).should().findFeedByCategory(1L, List.of(1L), List.of(), Category.FOOD, NEWEST,
+                Limit.of(20));
+    }
+
     @Test
     void listsOnlyTheFeedOfTheSignedInUser() {
         // Their own wants plus those of the people they follow, never everyone's.
         List<Want> feed = List.of(new Want("Ramen", Category.FOOD, dani));
         given(userService.current(DANI)).willReturn(dani);
-        given(wantRepository.findFeed(1L, List.of(1L), List.of())).willReturn(feed);
+        given(wantRepository.findFeed(1L, List.of(1L), List.of(), NEWEST, ALL)).willReturn(feed);
 
         assertThat(wantService.findAll(DANI)).extracting(WantResponse::message).containsExactly("Ramen");
         then(wantRepository).should(never()).findAll();
@@ -265,32 +290,33 @@ class WantServiceTest {
 
         wantService.findAll(DANI);
 
-        then(wantRepository).should().findFeed(1L, List.of(2L, 3L, 1L), List.of(7L));
+        then(wantRepository).should().findFeed(1L, List.of(2L, 3L, 1L), List.of(7L), NEWEST, ALL);
     }
 
     @Test
     void bringsTheSignedInUserUpToDateBeforeListing() {
         // So a picture just changed in Clerk is in this response, not only the next one.
         given(userService.current(DANI)).willReturn(dani);
-        given(wantRepository.findFeed(1L, List.of(1L), List.of())).willReturn(List.of());
+        given(wantRepository.findFeed(1L, List.of(1L), List.of(), NEWEST, ALL)).willReturn(List.of());
 
         wantService.findAll(DANI);
 
         InOrder order = inOrder(userService, wantRepository);
         order.verify(userService).current(DANI);
-        order.verify(wantRepository).findFeed(1L, List.of(1L), List.of());
+        order.verify(wantRepository).findFeed(1L, List.of(1L), List.of(), NEWEST, ALL);
     }
 
     @Test
     void bringsTheSignedInUserUpToDateBeforeFiltering() {
         given(userService.current(DANI)).willReturn(dani);
-        given(wantRepository.findFeedByCategory(1L, List.of(1L), List.of(), Category.FOOD)).willReturn(List.of());
+        given(wantRepository.findFeedByCategory(1L, List.of(1L), List.of(), Category.FOOD, NEWEST, ALL))
+                .willReturn(List.of());
 
         wantService.findByCategory(Category.FOOD, DANI);
 
         InOrder order = inOrder(userService, wantRepository);
         order.verify(userService).current(DANI);
-        order.verify(wantRepository).findFeedByCategory(1L, List.of(1L), List.of(), Category.FOOD);
+        order.verify(wantRepository).findFeedByCategory(1L, List.of(1L), List.of(), Category.FOOD, NEWEST, ALL);
     }
 
     /** dani's Pizza Friday, found as want 1 under the row lock. */

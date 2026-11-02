@@ -5,6 +5,7 @@ import { useCircles } from '../hooks/useCircles'
 import { useMe } from '../hooks/useMe'
 import { useOnPictureChange } from '../hooks/useOnPictureChange'
 import { useWants } from '../hooks/useWants'
+import LoadMore from './LoadMore'
 import type { AudienceChange, DeadlineChange, SeatsChange } from '../hooks/useWants'
 import { CATEGORIES } from '../types/wants'
 import type { Category, Want } from '../types/wants'
@@ -69,8 +70,24 @@ function audienceOf(value: string): number | null {
  */
 export default function Wants() {
   const [filter, setFilter] = useState<Category | ''>('')
-  const { wants, loading, error, refresh, add, update, close, reopen, start, end, cancel, signUp, withdraw } =
-    useWants(filter)
+  const {
+    wants,
+    loading,
+    error,
+    refresh,
+    hasMore,
+    loadMore,
+    loadingMore,
+    add,
+    update,
+    close,
+    reopen,
+    start,
+    end,
+    cancel,
+    signUp,
+    withdraw,
+  } = useWants(filter)
   // Your picture beside your wants comes from the API, so reload the list as
   // soon as you change it in Clerk's account menu.
   useOnPictureChange(refresh)
@@ -627,6 +644,8 @@ export default function Wants() {
           ))}
         </ul>
       )}
+
+      {hasMore && wants.length > 0 && <LoadMore onLoad={loadMore} loading={loadingMore} />}
     </>
   )
 }

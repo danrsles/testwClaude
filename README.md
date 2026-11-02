@@ -18,7 +18,7 @@ It is a full-stack app deployed on AWS. It was built one feature at a time from 
 ## What it does
 
 - **Wants.** A plan with a message and a category (food, movie, game or trip). It can have a seat limit or be an **open invite** with no limit, and it can have an optional **deadline**.
-- **Following.** Search people by username and follow them. Your feed shows your own wants plus those of everyone you follow, and nobody else's.
+- **Following.** Search people by username and follow them. Your feed shows your own wants plus those of everyone you follow, and nobody else's, newest first; older ones load as you scroll.
 - **Circles.** Groups, like group chats: the owner adds people who follow them, and members see the circle and each other. Any member can post a want to the circle, and every member sees it, even without following the poster.
 - **Signups.** Take a seat or give it up. The owner always holds the first seat, and a full want refuses more people.
 - **A lifecycle.** The owner can **close** a want (the lineup is fixed), **reopen** it, **start** it ("happening now"), **end** it, or **cancel** it. When a deadline passes, the want closes on its own.
@@ -117,7 +117,20 @@ This one is realistic: everyone loads the feed each time they open the app, and 
 
 Two attempts that looked equivalent were not: the same lists as subqueries took 151 ms, and a `UNION` of the rule's branches 79 ms, both because the planner went back to reading the table. And in JPQL, `w.user.id` in a query that fetches the user names the users table's id, not `wants.user_id`, so the first version of the fix still read every want; `Want` maps the two columns again, read-only, as `userId` and `circleId`.
 
-**What would raise it further**, measured the same way: page the feed instead of sending all of it. A feed of 524 wants is about 180 KB of JSON, and building it is now most of each request's 30 ms.
+**The feed in pages.** On the same million wants, `GET /wants` now returns 20 wants, newest first, and the screen loads older ones as you scroll ([`LoadMore`](frontend/src/components/LoadMore.tsx)). Opening the app costs the first page: 6.5 KB instead of 180, and lineups for 20 wants instead of 524, so the database's share of a request fell from about 4 ms to 2.5. The levels are the same as above, plus three more to find the new limit.
+
+| Users | All 524: req/s | p50 | p95 | First page: req/s | p50 | p95 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10 | 9 | 23 ms | 32 ms | 9 | 13 ms | 28 ms |
+| 100 | 89 | 27 ms | 37 ms | 90 | 12 ms | 25 ms |
+| 300 | 197 | 400 ms | 630 ms | 272 | 11 ms | 20 ms |
+| 500 | | | | 426 | 12 ms | 43 ms |
+| 800 | | | | 545 | 280 ms | 450 ms |
+| 1,000 | | | | 578 | 550 ms | 640 ms |
+
+It now bends at about **580 requests a second**, between 500 and 800 users, up from 210. The pool is no longer what runs out: 580 requests a second at 2.5 ms of database time keep under 2 of the 7 connections busy. What does run out has not been measured; the likely candidate is the CPU, which k6 shares on this laptop, spent on token signatures and JSON.
+
+Pages are by keyset, not offset: each asks for wants older than the last one shown (`?before=<id>`), which the query answers with `w.id < :before ... order by w.id desc` and a limit. With `?page=2`, a want posted between two pages would push a row from the first onto the second, showing it twice; with a cursor it can't, which [`WantFeedPagingIT`](src/test/java/com/example/demo/services/WantFeedPagingIT.java) checks. The query still finds all of your feed's rows through the indexes and sorts them before taking 20; at 524 rows that is under a millisecond, so no index on `(user_id, id)` was added.
 
 ## Architecture
 
@@ -313,8 +326,8 @@ Base path `/wants`.
 
 | Method | Path | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET` | `/wants` | — | `200` your wants, General wants of people you follow, and wants in circles you own or are in, each `{id, message, category, userId, username, imageUrl, capacity, seatsTaken, lineup, signedUp, status, happening, expiresAt, circle}`, `circle` being `{id, name}` or `null` for General, `lineup` being everyone seated as `{id, username, imageUrl}`, the owner first; cancelled wants are left out, ended ones stay | `400` unknown `?category=` |
-| `GET` | `/wants?category=FOOD` | — | `200` filtered list | `400` unknown or lowercase value |
+| `GET` | `/wants?before=&limit=` | — | `200` a page of your feed, newest first: your wants, General wants of people you follow, and wants in circles you own or are in, up to `limit` (default 20, at most 50) older than `before`, the id of the last want you have (left out: from the newest); a page shorter than `limit` is the last; each `{id, message, category, userId, username, imageUrl, capacity, seatsTaken, lineup, signedUp, status, happening, expiresAt, circle}`, `circle` being `{id, name}` or `null` for General, `lineup` being everyone seated as `{id, username, imageUrl}`, the owner first; cancelled wants are left out, ended ones stay | `400` unknown `?category=`, `limit` outside 1 to 50, `before` not a positive id |
+| `GET` | `/wants?category=FOOD` | — | `200` a page of the filtered feed, paged the same way | `400` unknown or lowercase value |
 | `POST` | `/wants` | `{message, category, capacity?, openInvite?, expiresAt?, circleId?}` | `201` created want, owned by you, with you in its first seat; `openInvite: true` gives it no seat limit; `expiresAt` is its deadline; `circleId` posts it to a circle you own or are in, otherwise it goes to all your followers (General) | `400` invalid body, `capacity` below 1, `capacity` with `openInvite`, or `expiresAt` in the past; `404` a circle you're not in, or a deleted one |
 | `PUT` | `/wants/{id}` | `{message, category, capacity?, openInvite?, expiresAt?, noDeadline?, circleId?, allFollowers?}` | `200` updated want; leaving out `capacity`, `expiresAt` or `circleId` keeps it; `circleId` moves it into a circle you own or are in, `allFollowers: true` back to General; `openInvite: true` removes the limit, `false` limits an open want to the people already in; `expiresAt` sets or moves the deadline, `noDeadline: true` removes it | `400` invalid body, capacity lowered, a capacity for an open want, `capacity` with `openInvite`, `expiresAt` in the past, `expiresAt` with `noDeadline`, or `circleId` with `allFollowers`; `403` not yours, `404` a circle you're not in, `404` unknown want, `409` closed (its deadline passed included), ended or cancelled |
 | `POST` | `/wants/{id}/close` | — | `200` the want, now `CLOSED`; closing again changes nothing | `403` not yours, `404` unknown want, `409` ended or cancelled |

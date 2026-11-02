@@ -9,6 +9,7 @@ import com.example.demo.models.Want;
 
 import jakarta.persistence.LockModeType;
 
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -71,18 +72,25 @@ public interface WantRepository extends JpaRepository<Want, Long> {
     String FEED_SOURCES = "(w.userId in :authorIds or w.circleId in :circleIds) and ";
 
     /**
-     * A user's feed, by VISIBLE_TO_USER: their own wants, General wants of
-     * everyone they follow, and wants in circles they own or are in.
+     * A page of a user's feed, by VISIBLE_TO_USER: their own wants, General
+     * wants of everyone they follow, and wants in circles they own or are in.
      * authorIds and circleIds are FEED_SOURCES.
+     *
+     * Newest first, and only wants older than :before, the id of the last
+     * want of the previous page (keyset paging). A want posted meanwhile
+     * lands above the pages already loaded instead of pushing a row from one
+     * page onto the next, as an offset would. limit is the page size.
      */
-    @Query(FEED + "where " + FEED_SOURCES + VISIBLE_TO_USER + " order by w.id")
+    @Query(FEED + "where w.id < :before and " + FEED_SOURCES + VISIBLE_TO_USER + " order by w.id desc")
     List<Want> findFeed(@Param("userId") Long userId, @Param("authorIds") Collection<Long> authorIds,
-            @Param("circleIds") Collection<Long> circleIds);
+            @Param("circleIds") Collection<Long> circleIds, @Param("before") Long before, Limit limit);
 
     /** As findFeed, narrowed to one category. */
-    @Query(FEED + "where w.category = :category and " + FEED_SOURCES + VISIBLE_TO_USER + " order by w.id")
+    @Query(FEED + "where w.id < :before and w.category = :category and " + FEED_SOURCES + VISIBLE_TO_USER
+            + " order by w.id desc")
     List<Want> findFeedByCategory(@Param("userId") Long userId, @Param("authorIds") Collection<Long> authorIds,
-            @Param("circleIds") Collection<Long> circleIds, @Param("category") Category category);
+            @Param("circleIds") Collection<Long> circleIds, @Param("category") Category category,
+            @Param("before") Long before, Limit limit);
 
     /** The ids of everyone a user follows, for FEED_SOURCES. */
     @Query("select f.followee.id from Follow f where f.follower.id = :userId")

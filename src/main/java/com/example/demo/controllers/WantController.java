@@ -6,10 +6,12 @@ import com.example.demo.dto.ReopenRequest;
 import com.example.demo.dto.WantRequest;
 import com.example.demo.dto.WantResponse;
 import com.example.demo.models.Category;
-import com.example.demo.services.ClerkIdentity;
 import com.example.demo.services.WantService;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Positive;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -30,17 +32,28 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/wants")
 public class WantController {
 
+    /** The feed's page size when the request names none, and the most one may ask for. */
+    static final int PAGE = 20;
+
+    static final int MAX_PAGE = 50;
+
     private final WantService wantService;
 
     public WantController(WantService wantService) {
         this.wantService = wantService;
     }
 
+    /**
+     * A page of your feed, newest first. before is the id of the last want
+     * you already have; left out, the page starts at the newest. A page
+     * shorter than limit is the last. A limit outside 1 to MAX_PAGE is a 400.
+     */
     @GetMapping
     public List<WantResponse> wants(@AuthenticationPrincipal Jwt jwt,
-            @RequestParam(required = false) Category category) {
-        ClerkIdentity who = Identities.of(jwt);
-        return category == null ? wantService.findAll(who) : wantService.findByCategory(category, who);
+            @RequestParam(required = false) Category category,
+            @RequestParam(required = false) @Positive Long before,
+            @RequestParam(defaultValue = "" + PAGE) @Min(1) @Max(MAX_PAGE) int limit) {
+        return wantService.findPage(Identities.of(jwt), category, before, limit);
     }
 
     @PostMapping
