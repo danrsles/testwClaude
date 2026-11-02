@@ -3,9 +3,15 @@ import { authFetch, fail } from './http'
 
 const BASE = '/api/wants'
 
-export async function listWants(category?: Category | ''): Promise<Want[]> {
-  const url = category ? `${BASE}?category=${category}` : BASE
-  const response = await authFetch(url)
+/**
+ * A page of the feed, newest first: up to `limit` wants older than `before`,
+ * the id of the last want already loaded, or the newest when it is left out.
+ */
+export async function listWants(category: Category | '', before: number | undefined, limit: number): Promise<Want[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (category) params.set('category', category)
+  if (before !== undefined) params.set('before', String(before))
+  const response = await authFetch(`${BASE}?${params}`)
   return response.ok ? response.json() : fail(response)
 }
 

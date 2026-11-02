@@ -20,6 +20,7 @@ import com.example.demo.repositories.CircleRepository;
 import com.example.demo.repositories.WantRepository;
 import com.example.demo.repositories.WantSignupRepository;
 
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -64,17 +65,34 @@ public class WantService {
      */
     @Transactional
     public List<WantResponse> findAll(ClerkIdentity who) {
-        User me = userService.current(who);
-        List<Long> circleIds = wantRepository.findCircleIds(me.getId());
-        return withSeats(wantRepository.findFeed(me.getId(), authorIds(me), circleIds), me);
+        return feed(who, null, null, Limit.unlimited());
     }
 
     /** As findAll, narrowed to one category. */
     @Transactional
     public List<WantResponse> findByCategory(Category category, ClerkIdentity who) {
+        return feed(who, category, null, Limit.unlimited());
+    }
+
+    /**
+     * A page of the feed, as findAll describes it, newest first: up to limit
+     * wants older than before (the id of the last want already shown), or
+     * the newest when before is null. category narrows it, unless null.
+     * Lineups are read for this page only.
+     */
+    @Transactional
+    public List<WantResponse> findPage(ClerkIdentity who, Category category, Long before, int limit) {
+        return feed(who, category, before, Limit.of(limit));
+    }
+
+    private List<WantResponse> feed(ClerkIdentity who, Category category, Long before, Limit limit) {
         User me = userService.current(who);
         List<Long> circleIds = wantRepository.findCircleIds(me.getId());
-        return withSeats(wantRepository.findFeedByCategory(me.getId(), authorIds(me), circleIds, category), me);
+        Long olderThan = before == null ? Long.MAX_VALUE : before;
+        List<Want> wants = category == null
+                ? wantRepository.findFeed(me.getId(), authorIds(me), circleIds, olderThan, limit)
+                : wantRepository.findFeedByCategory(me.getId(), authorIds(me), circleIds, category, olderThan, limit);
+        return withSeats(wants, me);
     }
 
     /**

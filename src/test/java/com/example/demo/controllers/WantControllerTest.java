@@ -95,7 +95,7 @@ class WantControllerTest {
 
     @Test
     void returnsAllWants() throws Exception {
-        given(wantService.findAll(DANI)).willReturn(List.of(
+        given(wantService.findPage(DANI, null, null, 20)).willReturn(List.of(
                 seated(new Want("Ramen downtown", Category.FOOD, dani)),
                 seated(new Want("Finish Elden Ring", Category.GAME, dani))));
 
@@ -123,7 +123,8 @@ class WantControllerTest {
     void neverExposesTheOwnersPrivateDetails() throws Exception {
         // Your followers see your wants, so the owner must appear
         // only as userId, username and picture, never as the User entity.
-        given(wantService.findAll(DANI)).willReturn(List.of(seated(new Want("Ramen downtown", Category.FOOD, dani))));
+        given(wantService.findPage(DANI, null, null, 20))
+                .willReturn(List.of(seated(new Want("Ramen downtown", Category.FOOD, dani))));
 
         mockMvc.perform(get("/wants").with(signedInAsDani()))
                 .andExpect(status().isOk())
@@ -139,18 +140,50 @@ class WantControllerTest {
         mockMvc.perform(get("/wants"))
                 .andExpect(status().isUnauthorized());
 
-        then(wantService).should(never()).findAll(any());
+        then(wantService).should(never()).findPage(any(), any(), any(), anyInt());
     }
 
     @Test
     void filtersByCategory() throws Exception {
-        given(wantService.findByCategory(eq(Category.TRIP), eq(DANI)))
+        given(wantService.findPage(DANI, Category.TRIP, null, 20))
                 .willReturn(List.of(seated(new Want("Weekend in Montreal", Category.TRIP, dani))));
 
         mockMvc.perform(get("/wants").param("category", "TRIP").with(signedInAsDani()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].category").value("TRIP"));
+    }
+
+    @Test
+    void passesTheCursorAndPageSizeOn() throws Exception {
+        given(wantService.findPage(DANI, Category.FOOD, 40L, 5))
+                .willReturn(List.of(seated(new Want("Ramen downtown", Category.FOOD, dani))));
+
+        mockMvc.perform(get("/wants").param("category", "FOOD").param("before", "40").param("limit", "5")
+                .with(signedInAsDani()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void refusesAPageSizeOutsideOneToFifty() throws Exception {
+        for (String limit : new String[] {"0", "51", "-1"}) {
+            mockMvc.perform(get("/wants").param("limit", limit).with(signedInAsDani()))
+                    .andExpect(status().isBadRequest());
+        }
+        mockMvc.perform(get("/wants").param("limit", "50").with(signedInAsDani()))
+                .andExpect(status().isOk());
+
+        then(wantService).should(never()).findPage(any(), any(), any(), eq(0));
+        then(wantService).should(never()).findPage(any(), any(), any(), eq(51));
+    }
+
+    @Test
+    void refusesACursorThatIsNotAPositiveId() throws Exception {
+        mockMvc.perform(get("/wants").param("before", "0").with(signedInAsDani()))
+                .andExpect(status().isBadRequest());
+
+        then(wantService).should(never()).findPage(any(), any(), any(), anyInt());
     }
 
     @Test
@@ -289,7 +322,7 @@ class WantControllerTest {
 
     @Test
     void anOpenInviteHasNoCapacity() throws Exception {
-        given(wantService.findAll(DANI)).willReturn(List.of(
+        given(wantService.findPage(DANI, null, null, 20)).willReturn(List.of(
                 seated(new Want("Board games", Category.GAME, dani, null)),
                 seated(new Want("Pizza Friday", Category.FOOD, dani, 4))));
 
@@ -344,7 +377,7 @@ class WantControllerTest {
     void feedShowsEachWantsStatus() throws Exception {
         Want closed = new Want("Pizza Friday", Category.FOOD, dani, 4);
         closed.close(Instant.parse("2026-10-22T18:00:00Z"));
-        given(wantService.findAll(DANI)).willReturn(List.of(
+        given(wantService.findPage(DANI, null, null, 20)).willReturn(List.of(
                 seated(new Want("Ramen downtown", Category.FOOD, dani)), seated(closed)));
 
         mockMvc.perform(get("/wants").with(signedInAsDani()))
@@ -592,7 +625,7 @@ class WantControllerTest {
     void showsTheWantsCircleByIdAndNameOrNullForGeneral() throws Exception {
         Want inCircle = new Want("Bouldering Saturday", Category.GAME, dani, 4);
         inCircle.setCircle(climbing());
-        given(wantService.findAll(DANI)).willReturn(List.of(
+        given(wantService.findPage(DANI, null, null, 20)).willReturn(List.of(
                 seated(inCircle),
                 seated(new Want("Pizza Friday", Category.FOOD, dani, 4))));
 

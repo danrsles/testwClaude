@@ -51,7 +51,7 @@ It is kept, and running it again adds nothing. Deleting it by hand is slow, beca
 | Script | What happens | Passes when |
 |---|---|---|
 | `race.js` | `load_1` posts a want with 6 seats; 200 others sign up at once | exactly 5 get in, 195 get 409, and the want shows 6 seats taken |
-| `feed.js` | 10 to 300 users each load `GET /wants` about once a second, over 3 minutes | fewer than 1% of requests fail; the latencies are the result |
+| `feed.js` | 10 to 300 users each load `GET /wants`, the feed's first page of 20, about once a second, over 3 minutes | fewer than 1% of requests fail; the latencies are the result |
 
 To measure one level at a time, as the README's tables do, give k6 stages on the command line, which replace the script's:
 

@@ -1,5 +1,5 @@
-import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useState } from 'react'
 import { HttpError } from '../api/http'
 import {
   cancelWant,
@@ -34,11 +34,20 @@ function isCircleGone(e: unknown, circleId: number | undefined): boolean {
   return circleId !== undefined && e instanceof HttpError && e.status === 404
 }
 
+/** How many wants a page holds. A shorter page is the last. */
+export const PAGE_SIZE = 20
+
 export interface UseWants {
+  /** Every page loaded so far, newest first. */
   wants: Want[]
   loading: boolean
   error: string | null
   refresh: () => Promise<void>
+  /** Whether older wants remain to be loaded. */
+  hasMore: boolean
+  /** Loads the next page of older wants, unless one is already loading. */
+  loadMore: () => void
+  loadingMore: boolean
   /** Each mutation resolves true on success, false if the API rejected it. */
   /**
    * A null capacity makes it an open invite, with no limit. Without expiresAt
@@ -73,75 +82,74 @@ export interface UseWants {
 }
 
 /**
- * Owns everything about wants that lives on the server: the cached list, its
- * loading and error state, and the operations that change it. Components
- * keep only their own UI state.
+ * Owns everything about wants that lives on the server: the loaded pages of
+ * the feed, their loading and error state, and the operations that change
+ * them. Components keep only their own UI state.
  *
- * Refetches whenever `filter` changes, and after every successful mutation.
+ * The pages are a TanStack infinite query, keyed by your user id and the
+ * filter, so switching filters back shows the cached pages at once, and a
+ * slow response for an old filter can't overwrite a newer one. Each page
+ * asks for wants older than the last one loaded (keyset paging). After every
+ * mutation, successful or not, every loaded page is refetched in order, each
+ * cursor worked out again from the fresh pages, so the screen matches the
+ * server however many pages are loaded.
  */
 export function useWants(filter: Category | ''): UseWants {
-  const [wants, setWants] = useState<Want[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  // Switching filters quickly starts overlapping requests. Each load claims a
-  // number, and only the newest is allowed to write to state, so a slow earlier
-  // response cannot overwrite a faster later one.
-  const latest = useRef(0)
-
-  const refresh = useCallback(async () => {
-    const request = ++latest.current
-    setLoading(true)
-    try {
-      const result = await listWants(filter)
-      if (request !== latest.current) return
-      setWants(result)
-      setError(null)
-    } catch (e) {
-      if (request !== latest.current) return
-      setError(messageOf(e))
-    } finally {
-      if (request === latest.current) setLoading(false)
-    }
-  }, [filter])
-
-  // Fetching on mount and on filter changes is synchronising with an external
-  // system, which is what effects are for. The lint rule fires because refresh
-  // sets loading synchronously; a query library would own this instead.
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect
-    refresh()
-  }, [refresh])
-
-  // The circles are TanStack Query's, shared with the Circles screen, so a
-  // circle found gone here is dropped there too.
   const { me } = useMe()
   const queryClient = useQueryClient()
+
+  const query = useInfiniteQuery({
+    queryKey: ['wants', me?.id, filter],
+    queryFn: ({ pageParam }) => listWants(filter, pageParam, PAGE_SIZE),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (page: Want[]) => (page.length < PAGE_SIZE ? undefined : page[page.length - 1].id),
+    enabled: me !== null,
+  })
+
+  const wants = query.data?.pages.flat() ?? []
+
+  // Why the last change was refused, kept with the filter it happened under,
+  // so switching filters clears it as a reload used to.
+  const [refusal, setRefusal] = useState<{ filter: Category | ''; message: string } | null>(null)
+  const loadError = query.error ? messageOf(query.error) : null
+  const error = refusal?.filter === filter ? refusal.message : loadError
+
+  // Every filter's pages, since a change can move a want in or out of any of them.
+  const refresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['wants', me?.id] })
+  }, [queryClient, me?.id])
+
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
   // circleId is the circle being posted to, if any, so its 404 can be worded.
   const mutate = useCallback(
     async (action: () => Promise<unknown>, circleId?: number): Promise<boolean> => {
       try {
         await action()
-        setError(null)
+        setRefusal(null)
         await refresh()
         return true
       } catch (e) {
         // Reload anyway: a refusal often means the want changed underneath
         // the screen, such as its deadline passing, and the rows should say so.
-        // The error is set after, since a successful reload clears it.
         await refresh()
         if (isCircleGone(e, circleId)) {
           // Deleted, or you were removed or left: the API can't tell you which.
-          setError("You can't post to that circle any more. It was deleted, or you're no longer in it.")
+          setRefusal({
+            filter,
+            message: "You can't post to that circle any more. It was deleted, or you're no longer in it.",
+          })
           void queryClient.invalidateQueries({ queryKey: ['circles', me?.id], exact: true })
         } else {
-          setError(messageOf(e))
+          setRefusal({ filter, message: messageOf(e) })
         }
         return false
       }
     },
-    [refresh, queryClient, me?.id],
+    [refresh, queryClient, me?.id, filter],
   )
 
   const add = useCallback(
@@ -199,9 +207,12 @@ export function useWants(filter: Category | ''): UseWants {
 
   return {
     wants,
-    loading,
+    loading: query.isFetching,
     error,
     refresh,
+    hasMore: hasNextPage,
+    loadMore,
+    loadingMore: isFetchingNextPage,
     add,
     update,
     close,

@@ -181,7 +181,65 @@ describe('Wants', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'MOVIE' }))
 
-    await waitFor(() => expect(listWants).toHaveBeenLastCalledWith('MOVIE'))
+    await waitFor(() => expect(listWants).toHaveBeenLastCalledWith('MOVIE', undefined, 20))
+  })
+
+  describe('paging', () => {
+    // A full first page, ids 40 down to 21, newest first, then a short second one.
+    const firstPage = Array.from({ length: 20 }, (_, i) => want(40 - i, `Want ${40 - i}`))
+    const secondPage = [want(20, 'Want 20'), want(19, 'Want 19')]
+
+    function pages() {
+      vi.mocked(listWants).mockImplementation(async (_category, before) =>
+        before === undefined ? firstPage : before === 21 ? secondPage : [],
+      )
+    }
+
+    it('asks for the first page newest first, without a cursor', async () => {
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      expect(listWants).toHaveBeenCalledWith('', undefined, 20)
+    })
+
+    it('offers no Load more when the first page is short', async () => {
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    })
+
+    it('loads older wants from the last one shown, and stops at a short page', async () => {
+      pages()
+      renderWants()
+      await screen.findByText('Want 21')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Load more' }))
+
+      expect(await screen.findByText('Want 19')).toBeInTheDocument()
+      expect(listWants).toHaveBeenLastCalledWith('', 21, 20)
+      expect(screen.getByText('Want 40')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Load more/ })).not.toBeInTheDocument()
+    })
+
+    it('reloads every loaded page after a change', async () => {
+      pages()
+      vi.mocked(signUp).mockResolvedValue({} as Awaited<ReturnType<typeof signUp>>)
+      // Someone else's want on the second page, so it has Sign up.
+      secondPage[1] = want(19, 'Want 19', 'FOOD', SAM, { capacity: 4 })
+      renderWants()
+      await screen.findByText('Want 21')
+      await userEvent.click(screen.getByRole('button', { name: 'Load more' }))
+      await screen.findByText('Want 19')
+      vi.mocked(listWants).mockClear()
+
+      await userEvent.click(within(row('Want 19')).getByRole('button', { name: 'Sign up' }))
+
+      await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+      expect(listWants).toHaveBeenNthCalledWith(1, '', undefined, 20)
+      expect(listWants).toHaveBeenNthCalledWith(2, '', 21, 20)
+      expect(screen.getByText('Want 19')).toBeInTheDocument()
+    })
   })
 
   it('saves an edited message', async () => {
