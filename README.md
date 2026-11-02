@@ -79,7 +79,7 @@ Flyway owns the schema (16 migrations, never edited once applied), and Hibernate
 
 ## Performance
 
-Measured with [k6](https://grafana.com/docs/k6/latest/) against the API on a laptop (i9-10980HK, 8 cores, 32 GB) and the local PostgreSQL in Docker, with the production pool of 7 connections, 1,000 seeded users and 10,000 wants. [`loadtest/`](loadtest/README.md) has the scripts and how to run them. Sign-in uses tokens signed with a local test key, trusted only by a test-only application in `src/test`, so the real security chain runs and nothing of it ships. These are laptop numbers, not production's; they show how the design behaves and where it gives way first. `spring-boot:test-run` also starts the JVM with `-XX:TieredStopAtLevel=1` for a quicker start, so CPU-bound work runs slower than in the deployed container; every run here used it, so they compare with each other.
+Measured with [k6](https://grafana.com/docs/k6/latest/) against the API on a laptop (i9-10980HK, 8 cores, 32 GB) and the local PostgreSQL in Docker, with the production pool of 7 connections, 1,000 seeded users and 10,000 wants (a million for the last test). [`loadtest/`](loadtest/README.md) has the scripts and how to run them. Sign-in uses tokens signed with a local test key, trusted only by a test-only application in `src/test`, so the real security chain runs and nothing of it ships. These are laptop numbers, not production's; they show how the design behaves and where it gives way first. `spring-boot:test-run` also starts the JVM with `-XX:TieredStopAtLevel=1` for a quicker start, so CPU-bound work runs slower than in the deployed container; every run here used it, so they compare with each other.
 
 **The last seat, 200 people at once.** A stress test of correctness, well past real use: a want is seen by someone's followers or one circle, tens of people, who rarely press Sign up in the same second. A want with 6 seats; 200 users sign up in the same moment. Across three runs, exactly 5 got in, 195 were told it was full (409) and the want ended with 6 seats taken, every time. Warm, the winners waited about 0.3 s. The people turned away waited up to **4.7 s** (p95), because every signup takes the want's row lock, one at a time at about 29 ms each, before it counts the seats, even once they are long gone. Two queues form: 7 requests hold the pool's connections, one working under the lock and six waiting for it inside PostgreSQL, and the rest wait in the pool for a connection, so for those seconds everyone else's requests wait too.
 
@@ -97,11 +97,27 @@ Measured with [k6](https://grafana.com/docs/k6/latest/) against the API on a lap
 
 *Before:* throughput stopped at about **18 requests a second**, from about 30 users. That was the pool: 7 connections ÷ about 0.38 s each, and past that, requests queued for a connection. The SQL was not the cost; the feed query takes 15 ms. Hibernate looked up about 54 owners one query at a time, because `Want.user` and `Circle.owner` are eager and the feed query did not fetch them: an N+1, growing with the people you follow.
 
-*After* fetching the owners in the feed query (`join fetch`, [`WantRepository.FEED`](src/main/java/com/example/demo/repositories/WantRepository.java)), a feed is the same 3 statements however many people you follow, which [`WantFeedQueriesIT`](src/test/java/com/example/demo/services/WantFeedQueriesIT.java) checks by counting them. Each request holds its connection for about 33 ms instead of 380, so the same pool of 7 serves about **210 requests a second**, 11 times as many, and stays under 70 ms at p95 up to about 200 users. Past that it queues for a connection again, now at about 250 users.
+*After* fetching the owners in the feed query (`join fetch`, [`WantRepository.FEED`](src/main/java/com/example/demo/repositories/WantRepository.java)), a feed is the same handful of statements however many people you follow, which [`WantFeedQueriesIT`](src/test/java/com/example/demo/services/WantFeedQueriesIT.java) checks by counting them. Each request holds its connection for about 33 ms instead of 380, so the same pool of 7 serves about **210 requests a second**, 11 times as many, and stays under 70 ms at p95 up to about 200 users. Past that it queues for a connection again, now at about 250 users.
 
 This one is realistic: everyone loads the feed each time they open the app, and it only grows, since ended wants stay in it and nothing pages it. Someone with 30 friends posting a couple of wants a week reaches hundreds within months.
 
-**What would raise it further**, each to be measured the same way: page the feed instead of sending all of it; index `wants.user_id`, which has none, so the feed query reads the whole table: cheap at 10,000 rows, and it won't stay so.
+**The feed with a million wants.** The same 1,000 users and feeds, plus 99,000 people nobody in the test follows, with 10 wants each ([`seed-big.sql`](loadtest/seed-big.sql)). Each feed is unchanged; only the table around it grows. Each level ran for 30 seconds after a 5-second ramp.
+
+| Users | Before: req/s | p50 | p95 | After: req/s | p50 | p95 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10 | 5 | 780 ms | 910 ms | 9 | 23 ms | 32 ms |
+| 30 | 7 | 3.2 s | 3.9 s | 27 | 28 ms | 41 ms |
+| 100 | 7 | 12.9 s | 14.2 s | 89 | 27 ms | 37 ms |
+| 200 | 7 | 26.6 s | 27.9 s | 173 | 37 ms | 190 ms |
+| 300 | 7 | 29.1 s | 43.6 s | 197 | 400 ms | 630 ms |
+
+*Before:* the feed query took **490 ms** instead of 5, for the same 524 wants. `EXPLAIN ANALYZE` showed why: PostgreSQL read all 1,000,021 wants and threw away 999,497. The visibility rule is one `OR` across wants, follows and circles (yours, someone you follow and General, or a circle you're in), and PostgreSQL can't answer an `OR` like that from an index, so an index on `wants.user_id` alone changed nothing (489 ms). Its cost followed the size of the table, not of your feed, so the pool of 7 managed 7 requests a second.
+
+*After* ([`WantRepository.FEED_SOURCES`](src/main/java/com/example/demo/repositories/WantRepository.java)): the service first reads the ids of everyone you follow and of your circles, two lookups of a fraction of a millisecond, and the feed query gets one more condition in front of the rule: `user_id IN (you and them) OR circle_id IN (your circles)`. That is an `OR` of two columns of one table against plain lists, which PostgreSQL answers with two indexes (a `BitmapOr` over the new `wants_user_idx` and the existing `wants_circle_idx`), touching only the rows it returns: **1.2 ms**. It lets through everything the rule does and a little more, and the rule still runs after it, so the result is the same, which the existing visibility tests check. The feed at a million wants now behaves as it did at ten thousand.
+
+Two attempts that looked equivalent were not: the same lists as subqueries took 151 ms, and a `UNION` of the rule's branches 79 ms, both because the planner went back to reading the table. And in JPQL, `w.user.id` in a query that fetches the user names the users table's id, not `wants.user_id`, so the first version of the fix still read every want; `Want` maps the two columns again, read-only, as `userId` and `circleId`.
+
+**What would raise it further**, measured the same way: page the feed instead of sending all of it. A feed of 524 wants is about 180 KB of JSON, and building it is now most of each request's 30 ms.
 
 ## Architecture
 

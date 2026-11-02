@@ -72,6 +72,18 @@ public class Want {
     @JoinColumn(name = "circle_id")
     private Circle circle;
 
+    /**
+     * user_id and circle_id again, read-only, for WantRepository.FEED_SOURCES
+     * only: in a query that fetches user and circle, w.user.id names the
+     * fetched row's id, which no index on wants serves. Not set on a want
+     * created here until it is loaded again; use user and circle instead.
+     */
+    @Column(name = "user_id", insertable = false, updatable = false)
+    private Long userId;
+
+    @Column(name = "circle_id", insertable = false, updatable = false)
+    private Long circleId;
+
     protected Want() {
     }
 

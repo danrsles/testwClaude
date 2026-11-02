@@ -65,14 +65,27 @@ public class WantService {
     @Transactional
     public List<WantResponse> findAll(ClerkIdentity who) {
         User me = userService.current(who);
-        return withSeats(wantRepository.findFeed(me.getId()), me);
+        List<Long> circleIds = wantRepository.findCircleIds(me.getId());
+        return withSeats(wantRepository.findFeed(me.getId(), authorIds(me), circleIds), me);
     }
 
     /** As findAll, narrowed to one category. */
     @Transactional
     public List<WantResponse> findByCategory(Category category, ClerkIdentity who) {
         User me = userService.current(who);
-        return withSeats(wantRepository.findFeedByCategory(me.getId(), category), me);
+        List<Long> circleIds = wantRepository.findCircleIds(me.getId());
+        return withSeats(wantRepository.findFeedByCategory(me.getId(), authorIds(me), circleIds, category), me);
+    }
+
+    /**
+     * You and everyone you follow, for WantRepository.FEED_SOURCES. Read in a
+     * statement before the feed's, so someone followed in between shows on
+     * the next load.
+     */
+    private List<Long> authorIds(User me) {
+        List<Long> ids = new ArrayList<>(wantRepository.findFolloweeIds(me.getId()));
+        ids.add(me.getId());
+        return ids;
     }
 
     /** As the create below, for a General want: all your followers. */

@@ -1,5 +1,6 @@
 package com.example.demo.repositories;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -52,15 +53,45 @@ public interface WantRepository extends JpaRepository<Want, Long> {
     String FEED = "select w from Want w join fetch w.user left join fetch w.circle c left join fetch c.owner ";
 
     /**
+     * Where a feed's wants can come from: posted by :authorIds (you and
+     * everyone you follow, findFolloweeIds) or in one of :circleIds (yours,
+     * findCircleIds). Every want VISIBLE_TO_USER lets through matches it, and
+     * a few it refuses do too, so it never changes the result.
+     *
+     * It is there for the indexes. VISIBLE_TO_USER is an OR across wants,
+     * follows and circles, which PostgreSQL can only answer by reading every
+     * want and testing each: 490 ms at a million wants. This OR is of two
+     * columns of wants against plain lists, so it reads wants_user_idx and
+     * wants_circle_idx and touches only the rows it needs: about 1 ms. The
+     * lists are bound as values on purpose: as subqueries, the planner goes
+     * back to reading the table. Want.userId and Want.circleId are the
+     * columns of wants themselves; w.user.id would be the fetched users
+     * row's id, which no index on wants serves.
+     */
+    String FEED_SOURCES = "(w.userId in :authorIds or w.circleId in :circleIds) and ";
+
+    /**
      * A user's feed, by VISIBLE_TO_USER: their own wants, General wants of
      * everyone they follow, and wants in circles they own or are in.
+     * authorIds and circleIds are FEED_SOURCES.
      */
-    @Query(FEED + "where " + VISIBLE_TO_USER + " order by w.id")
-    List<Want> findFeed(@Param("userId") Long userId);
+    @Query(FEED + "where " + FEED_SOURCES + VISIBLE_TO_USER + " order by w.id")
+    List<Want> findFeed(@Param("userId") Long userId, @Param("authorIds") Collection<Long> authorIds,
+            @Param("circleIds") Collection<Long> circleIds);
 
     /** As findFeed, narrowed to one category. */
-    @Query(FEED + "where w.category = :category and " + VISIBLE_TO_USER + " order by w.id")
-    List<Want> findFeedByCategory(@Param("userId") Long userId, @Param("category") Category category);
+    @Query(FEED + "where w.category = :category and " + FEED_SOURCES + VISIBLE_TO_USER + " order by w.id")
+    List<Want> findFeedByCategory(@Param("userId") Long userId, @Param("authorIds") Collection<Long> authorIds,
+            @Param("circleIds") Collection<Long> circleIds, @Param("category") Category category);
+
+    /** The ids of everyone a user follows, for FEED_SOURCES. */
+    @Query("select f.followee.id from Follow f where f.follower.id = :userId")
+    List<Long> findFolloweeIds(@Param("userId") Long userId);
+
+    /** The ids of the circles a user owns or is in, not deleted, for FEED_SOURCES. */
+    @Query("select c.id from Circle c where c.archivedAt is null and (c.owner.id = :userId "
+            + "or exists (select m from CircleMember m where m.id.circleId = c.id and m.id.memberId = :userId))")
+    List<Long> findCircleIds(@Param("userId") Long userId);
 
     /** Whether a want is in a user's feed, by VISIBLE_TO_USER. */
     @Query("select case when count(w) > 0 then true else false end from Want w left join w.circle c "
