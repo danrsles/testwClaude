@@ -36,7 +36,8 @@ export default function App() {
       <Show when="signed-in">
         {/* One GET /me, which the wants list uses to tell your wants from others'. */}
         <MeProvider>
-          <main className="mx-auto max-w-3xl px-4 pt-6 pb-16">
+          {/* Wide for the wants rows; screens with prose or short rows cap themselves at max-w-3xl. */}
+          <main className="mx-auto max-w-6xl px-4 pt-6 pb-16 sm:px-6 lg:px-8">
             <header className="mb-8 flex flex-wrap items-center justify-between gap-3">
               <nav aria-label="Main" className="flex gap-4 text-sm">
                 {NAV.map((n) => (
