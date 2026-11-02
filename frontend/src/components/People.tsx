@@ -31,7 +31,7 @@ export default function People() {
   }
 
   return (
-    <>
+    <div className="max-w-3xl">
       <title>People · Wants</title>
       <h1 className="text-3xl font-semibold tracking-tight">People</h1>
       <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">
@@ -138,6 +138,6 @@ export default function People() {
           })}
         </ul>
       )}
-    </>
+    </div>
   )
 }

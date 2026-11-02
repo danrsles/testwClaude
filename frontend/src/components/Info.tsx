@@ -21,7 +21,7 @@ const STACK = [
  */
 export default function Info() {
   return (
-    <>
+    <div className="max-w-3xl">
       <title>About · Wants</title>
       <h1 className="text-3xl font-semibold tracking-tight">About Wants</h1>
       <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">
@@ -63,6 +63,6 @@ export default function Info() {
           ))}
         </dl>
       </section>
-    </>
+    </div>
   )
 }
