@@ -250,35 +250,47 @@ class WantServiceTest {
         // Their own wants plus those of the people they follow, never everyone's.
         List<Want> feed = List.of(new Want("Ramen", Category.FOOD, dani));
         given(userService.current(DANI)).willReturn(dani);
-        given(wantRepository.findFeed(1L)).willReturn(feed);
+        given(wantRepository.findFeed(1L, List.of(1L), List.of())).willReturn(feed);
 
         assertThat(wantService.findAll(DANI)).extracting(WantResponse::message).containsExactly("Ramen");
         then(wantRepository).should(never()).findAll();
     }
 
     @Test
+    void narrowsTheFeedToYouThePeopleYouFollowAndYourCircles() {
+        // WantRepository.FEED_SOURCES, which lets the feed use the indexes.
+        given(userService.current(DANI)).willReturn(dani);
+        given(wantRepository.findFolloweeIds(1L)).willReturn(List.of(2L, 3L));
+        given(wantRepository.findCircleIds(1L)).willReturn(List.of(7L));
+
+        wantService.findAll(DANI);
+
+        then(wantRepository).should().findFeed(1L, List.of(2L, 3L, 1L), List.of(7L));
+    }
+
+    @Test
     void bringsTheSignedInUserUpToDateBeforeListing() {
         // So a picture just changed in Clerk is in this response, not only the next one.
         given(userService.current(DANI)).willReturn(dani);
-        given(wantRepository.findFeed(1L)).willReturn(List.of());
+        given(wantRepository.findFeed(1L, List.of(1L), List.of())).willReturn(List.of());
 
         wantService.findAll(DANI);
 
         InOrder order = inOrder(userService, wantRepository);
         order.verify(userService).current(DANI);
-        order.verify(wantRepository).findFeed(1L);
+        order.verify(wantRepository).findFeed(1L, List.of(1L), List.of());
     }
 
     @Test
     void bringsTheSignedInUserUpToDateBeforeFiltering() {
         given(userService.current(DANI)).willReturn(dani);
-        given(wantRepository.findFeedByCategory(1L, Category.FOOD)).willReturn(List.of());
+        given(wantRepository.findFeedByCategory(1L, List.of(1L), List.of(), Category.FOOD)).willReturn(List.of());
 
         wantService.findByCategory(Category.FOOD, DANI);
 
         InOrder order = inOrder(userService, wantRepository);
         order.verify(userService).current(DANI);
-        order.verify(wantRepository).findFeedByCategory(1L, Category.FOOD);
+        order.verify(wantRepository).findFeedByCategory(1L, List.of(1L), List.of(), Category.FOOD);
     }
 
     /** dani's Pizza Friday, found as want 1 under the row lock. */
