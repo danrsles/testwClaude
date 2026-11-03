@@ -11,10 +11,21 @@ export class HttpError extends Error {
   }
 }
 
-/** Turns a failed response into an HttpError carrying its status and something readable. */
+/**
+ * Turns a failed response into an HttpError carrying its status and something readable.
+ * A 429 is worded here, once, from its Retry-After, because every screen shows it the same way.
+ */
 export async function fail(response: Response): Promise<never> {
+  if (response.status === 429) throw new HttpError(429, tooMany(response.headers.get('Retry-After')))
   const body = await response.text()
   throw new HttpError(response.status, body || `${response.status} ${response.statusText}`)
+}
+
+/** The API's rate limit, in words. Retry-After is whole seconds. */
+function tooMany(retryAfter: string | null): string {
+  const seconds = Number(retryAfter)
+  if (!Number.isInteger(seconds) || seconds < 1) return "You're going a bit fast. Wait a moment and try again."
+  return `You're going a bit fast. Try again in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.`
 }
 
 /**

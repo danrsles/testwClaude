@@ -52,6 +52,15 @@ It is kept, and running it again adds nothing. Deleting it by hand is slow, beca
 |---|---|---|
 | `race.js` | `load_1` posts a want with 6 seats; 200 others sign up at once | exactly 5 get in, 195 get 409, and the want shows 6 seats taken |
 | `feed.js` | 10 to 300 users each load `GET /wants`, the feed's first page of 20, about once a second, over 3 minutes | fewer than 1% of requests fail; the latencies are the result |
+| `ratelimit.js` | 100 users load the feed once a second; after 15 s, one more (`load_1`) sends `GET /wants` from 50 connections with no pause, for 50 s | none of the 100 is ever refused; how many of the flood's requests were served, and everyone else's latency, are the result |
+
+The API runs with the rate limit on, as deployed (`application-loadtest.properties`). `feed.js` (60 reads a minute per user) and `race.js` (one signup each) stay under it. To compare `ratelimit.js` with the limit off, start the API with it switched off:
+
+```bash
+mvn spring-boot:test-run -Dspring-boot.run.arguments=--app.rate-limit.enabled=false
+```
+
+Tokens are per user, so a scenario that sends one user's requests faster than the limit (120 reads at once, then 2 a second; 10 writes at once, then one every 2 s) gets 429s, as `ratelimit.js` means to.
 
 To measure one level at a time, as the README's tables do, give k6 stages on the command line, which replace the script's:
 

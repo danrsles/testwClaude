@@ -330,6 +330,17 @@ describe('Circles', () => {
     expect(row).not.toHaveTextContent('Not Found')
   })
 
+  it('shows the rate limit as fail worded it', async () => {
+    vi.mocked(createCircle).mockRejectedValue(new HttpError(429, "You're going a bit fast. Try again in 2 seconds."))
+    renderCircles()
+    await rowOf('Friends')
+
+    await userEvent.type(screen.getByLabelText('New circle'), 'Climbing')
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent("You're going a bit fast. Try again in 2 seconds.")
+  })
+
   it('a circle that no longer exists leaves the list', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     // Each circle was deleted elsewhere: the API answers 404, and the next list leaves it out.
