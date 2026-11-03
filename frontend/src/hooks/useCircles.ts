@@ -33,13 +33,15 @@ const REFUSED: Record<Action, string> = {
 /**
  * A refusal in words. The API's error bodies are Spring's raw JSON with no
  * message, so its status is all there is to go on. Anything that never got
- * a response, such as a network failure, keeps its own message.
+ * a response, such as a network failure, keeps its own message, and so does
+ * a 429, which `fail` already worded.
  */
 function explain(e: unknown, action: Action): string {
   if (!(e instanceof HttpError)) return messageOf(e)
   if (e.status === 404) return 'This circle no longer exists.'
   if (e.status === 403) return "Only the circle's owner can do that."
   if (e.status === 400) return REFUSED[action]
+  if (e.status === 429) return e.message
   return 'Something went wrong. Try again.'
 }
 
@@ -58,6 +60,7 @@ function loadProblem(e: unknown): string | null {
   if (!e) return null
   if (!(e instanceof HttpError)) return messageOf(e)
   if (e.status === 404) return 'This circle no longer exists.'
+  if (e.status === 429) return e.message
   return "Couldn't load this. Reload the page to try again."
 }
 
