@@ -104,6 +104,30 @@ function row(message: string): HTMLElement {
   return screen.getByText(message).closest('li')!
 }
 
+/** Opens a want's ⋯ menu, where the owner's less common actions live, and returns it. */
+async function openMenu(message: string): Promise<HTMLElement> {
+  await userEvent.click(within(row(message)).getByRole('button', { name: `More actions for ${message}` }))
+  return screen.getByRole('menu')
+}
+
+/** Picks an action, such as Close or Cancel want, from a want's ⋯ menu. */
+async function pickFromMenu(message: string, action: string) {
+  await userEvent.click(within(await openMenu(message)).getByRole('menuitem', { name: action }))
+}
+
+/** The names in a want's ⋯ menu, or none when it has no menu; leaves the menu closed. */
+async function menuOf(message: string): Promise<string[]> {
+  const trigger = within(row(message)).queryByRole('button', { name: `More actions for ${message}` })
+  if (!trigger) return []
+  await userEvent.click(trigger)
+  const menu = within(screen.getByRole('menu'))
+  const names = [...menu.queryAllByRole('menuitem'), ...menu.queryAllByRole('menuitemradio')].map(
+    (item) => item.textContent ?? '',
+  )
+  await userEvent.keyboard('{Escape}')
+  return names
+}
+
 // Wants reads the signed-in user from useMe, so it renders inside the
 // provider, links to People, so inside a router, and reads your circles
 // through TanStack Query, so inside a fresh client per test.
@@ -179,7 +203,7 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(screen.getByRole('button', { name: 'MOVIE' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Movie' }))
 
     await waitFor(() => expect(listWants).toHaveBeenLastCalledWith('MOVIE', undefined, 20))
   })
@@ -220,6 +244,33 @@ describe('Wants', () => {
       expect(listWants).toHaveBeenLastCalledWith('', 21, 20)
       expect(screen.getByText('Want 40')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /Load more/ })).not.toBeInTheDocument()
+    })
+
+    it('keeps the refreshed pages when Load more is pressed while a change is reloading them', async () => {
+      // Load more during the refresh after a signup used to cancel that
+      // refresh, leaving the card on its old Sign up.
+      const mine = Array.from({ length: 20 }, (_, i) =>
+        i === 0 ? want(40, 'Want 40', 'FOOD', SAM, { capacity: 4 }) : want(40 - i, `Want ${40 - i}`),
+      )
+      vi.mocked(listWants).mockResolvedValue(mine)
+      vi.mocked(signUp).mockResolvedValue({} as Awaited<ReturnType<typeof signUp>>)
+      renderWants()
+      await screen.findByText('Want 21')
+
+      // The refresh is held open until the test lets it answer.
+      let answer: () => void = () => {}
+      const refreshed = [
+        want(40, 'Want 40', 'FOOD', SAM, { capacity: 4, seatsTaken: 2, signedUp: true }),
+        ...mine.slice(1),
+      ]
+      vi.mocked(listWants).mockImplementation((_category, before) =>
+        before === undefined ? new Promise((resolve) => (answer = () => resolve(refreshed))) : Promise.resolve([]),
+      )
+      await userEvent.click(within(row('Want 40')).getByRole('button', { name: 'Sign up' }))
+      await userEvent.click(screen.getByRole('button', { name: /Load more/ }))
+      answer()
+
+      expect(await within(row('Want 40')).findByRole('button', { name: 'Withdraw' })).toBeInTheDocument()
     })
 
     it('reloads every loaded page after a change', async () => {
@@ -265,10 +316,42 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Cancel want' }))
+    await pickFromMenu('Ramen downtown', 'Cancel want')
 
     expect(cancelWant).toHaveBeenCalledWith(1)
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it('moves focus to the next card after cancelling, or the Add box when none is left', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.mocked(cancelWant).mockResolvedValue(undefined)
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown'), want(2, 'Dune Part Two', 'MOVIE')])
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    // The card leaves with the focus it had, so the next one's title takes it.
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE')])
+    await pickFromMenu('Ramen downtown', 'Cancel want')
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dune Part Two' })).toHaveFocus())
+
+    vi.mocked(listWants).mockResolvedValue([])
+    await pickFromMenu('Dune Part Two', 'Cancel want')
+    await waitFor(() => expect(screen.getByLabelText('Want description')).toHaveFocus())
+  })
+
+  it('names each card by a heading, which describes its buttons', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4 })])
+    renderWants()
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Dune Part Two' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign up' })).toHaveAccessibleDescription('Dune Part Two')
+  })
+
+  it('says seat, not seats, for one', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown')])
+    renderWants()
+
+    expect(await screen.findByText('1 / 1 seat')).toBeInTheDocument()
   })
 
   it('asks before cancelling, and cancels nothing if you say no', async () => {
@@ -277,7 +360,7 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Cancel want' }))
+    await pickFromMenu('Ramen downtown', 'Cancel want')
 
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Ramen downtown'))
     expect(cancelWant).not.toHaveBeenCalled()
@@ -292,10 +375,10 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Dune Part Two')
 
-    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Cancel want' }))
+    await pickFromMenu('Ramen downtown', 'Cancel want')
     expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('The 2 other people signed up will be told.'))
 
-    await userEvent.click(within(row('Dune Part Two')).getByRole('button', { name: 'Cancel want' }))
+    await pickFromMenu('Dune Part Two', 'Cancel want')
     expect(confirm).toHaveBeenLastCalledWith(expect.not.stringContaining('told'))
   })
 
@@ -319,8 +402,9 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Dune Part Two')
 
-    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Close' })).toBeEnabled()
-    expect(within(row('Dune Part Two')).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+    expect(await menuOf('Ramen downtown')).toContain('Close')
+    // Other people's wants get no menu at all.
+    expect(await menuOf('Dune Part Two')).toEqual([])
   })
 
   it('closes a want and reloads the list', async () => {
@@ -328,10 +412,25 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Close' }))
+    await pickFromMenu('Ramen downtown', 'Close')
 
     expect(closeWant).toHaveBeenCalledWith(1)
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it('changes the category from the menu, ticking the current one', async () => {
+    vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown', 'GAME'))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    const menu = await openMenu('Ramen downtown')
+    expect(within(menu).getByRole('menuitemradio', { name: 'Food' })).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(within(menu).getByRole('menuitemradio', { name: 'Game' }))
+
+    expect(updateWant).toHaveBeenCalledWith(1, { message: 'Ramen downtown', category: 'GAME' })
+    // The menu closes and hands focus back to its button.
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(within(row('Ramen downtown')).getByRole('button', { name: /^More actions for/ })).toHaveFocus()
   })
 
   it('shows Closed on a closed want', async () => {
@@ -353,10 +452,9 @@ describe('Wants', () => {
     await screen.findByText('Ramen downtown')
 
     expect(screen.getByRole('button', { name: 'Reopen' })).toBeEnabled()
-    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Change category')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Cancel want' })).toBeEnabled()
+    // No Close and no category choices, only Start and Cancel want.
+    expect(await menuOf('Ramen downtown')).toEqual(['Start', 'Cancel want'])
   })
 
   it('reopens a want and reloads the list', async () => {
@@ -394,9 +492,9 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Dune Part Two')
 
-    expect(within(row('Ramen downtown')).getByRole('button', { name: 'Start' })).toBeEnabled()
-    expect(within(row('Catan night')).getByRole('button', { name: 'Start' })).toBeEnabled()
-    expect(within(row('Dune Part Two')).queryByRole('button', { name: 'Start' })).not.toBeInTheDocument()
+    expect(await menuOf('Ramen downtown')).toContain('Start')
+    expect(await menuOf('Catan night')).toContain('Start')
+    expect(await menuOf('Dune Part Two')).toEqual([])
   })
 
   it('starts a want and reloads the list', async () => {
@@ -404,7 +502,7 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Start' }))
+    await pickFromMenu('Ramen downtown', 'Start')
 
     expect(startWant).toHaveBeenCalledWith(1)
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
@@ -432,10 +530,11 @@ describe('Wants', () => {
     await screen.findByText('Dune Part Two')
 
     for (const mine of ['Ramen downtown', 'Catan night']) {
-      expect(within(row(mine)).getByRole('button', { name: 'End' })).toBeEnabled()
-      expect(within(row(mine)).queryByRole('button', { name: 'Start' })).not.toBeInTheDocument()
+      const actions = await menuOf(mine)
+      expect(actions).toContain('End')
+      expect(actions).not.toContain('Start')
     }
-    expect(within(row('Dune Part Two')).queryByRole('button', { name: 'End' })).not.toBeInTheDocument()
+    expect(await menuOf('Dune Part Two')).toEqual([])
   })
 
   it('asks before ending, and ends nothing if you say no', async () => {
@@ -445,7 +544,7 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(screen.getByRole('button', { name: 'End' }))
+    await pickFromMenu('Ramen downtown', 'End')
 
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Ramen downtown'))
     expect(endWant).not.toHaveBeenCalled()
@@ -458,7 +557,7 @@ describe('Wants', () => {
     renderWants()
     await screen.findByText('Ramen downtown')
 
-    await userEvent.click(screen.getByRole('button', { name: 'End' }))
+    await pickFromMenu('Ramen downtown', 'End')
 
     expect(endWant).toHaveBeenCalledWith(1)
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
@@ -502,8 +601,8 @@ describe('Wants', () => {
     await screen.findByText('Catan night')
 
     for (const ended of ['Ramen downtown', 'Dune Part Two', 'Catan night']) {
+      // No ⋯ menu either: it is a button too.
       expect(within(row(ended)).queryByRole('button')).not.toBeInTheDocument()
-      expect(within(row(ended)).queryByLabelText('Change category')).not.toBeInTheDocument()
     }
   })
 
@@ -514,8 +613,8 @@ describe('Wants', () => {
 
     // One set of controls, for dani's want; sam's row is read-only.
     expect(await screen.findAllByRole('button', { name: 'Edit' })).toHaveLength(1)
-    expect(screen.getAllByRole('button', { name: 'Cancel want' })).toHaveLength(1)
-    expect(screen.getAllByLabelText('Change category')).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /^More actions for/ })).toHaveLength(1)
+    expect(await menuOf('Ramen downtown')).toContain('Cancel want')
   })
 
   it('names each owner by username', async () => {
@@ -693,12 +792,12 @@ describe('Wants', () => {
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
   })
 
-  it('disables Sign up when the want is full', async () => {
+  it('says Full instead of offering Sign up when the want is full', async () => {
     vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 2, seatsTaken: 2 })])
     renderWants()
     await screen.findByText('Dune Part Two')
 
-    expect(screen.getByRole('button', { name: 'Sign up' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Sign up' })).not.toBeInTheDocument()
     expect(within(row('Dune Part Two')).getByText('Full')).toBeInTheDocument()
   })
 
@@ -848,6 +947,135 @@ describe('Wants', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('This want is full')
   })
 
+  it('shows a refusal in the card it is about, not only at the top of the feed', async () => {
+    vi.mocked(listWants).mockResolvedValue([
+      want(1, 'Ramen downtown'),
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 2 }),
+    ])
+    vi.mocked(signUp).mockRejectedValue(new Error('This want is full'))
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign up' }))
+
+    expect(await within(row('Dune Part Two')).findByRole('alert')).toHaveTextContent('This want is full')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+  })
+
+  it('shows a refusal at the top when its want has left the feed', async () => {
+    // Cancelled elsewhere: there is no card left to show it in.
+    vi.mocked(listWants).mockResolvedValueOnce([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 2 })])
+    vi.mocked(listWants).mockResolvedValue([])
+    vi.mocked(signUp).mockRejectedValue(new Error('Not found'))
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign up' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Not found')
+    expect(screen.queryByText('Dune Part Two')).not.toBeInTheDocument()
+  })
+
+  it("words a refusal from its status, never showing the API's raw body", async () => {
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 2 })])
+    vi.mocked(signUp).mockRejectedValue(new HttpError(409, '{"status":409,"error":"Conflict"}'))
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign up' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent("That didn't go through: it changed meanwhile, such as closing or filling up.")
+    expect(alert).not.toHaveTextContent('Conflict')
+  })
+
+  it('keeps the rate limit wording it was given', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 2 })])
+    vi.mocked(signUp).mockRejectedValue(new HttpError(429, "You're going a bit fast. Try again in 2 seconds."))
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign up' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent("You're going a bit fast. Try again in 2 seconds.")
+  })
+
+  it('disables Save and says why when the capacity is below the current one or the text is blank', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(1, 'Ramen downtown', 'FOOD', DANI, { capacity: 3 })])
+    renderWants()
+    await screen.findByText('Ramen downtown')
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+
+    const capacity = screen.getByLabelText('Edit capacity')
+    await userEvent.clear(capacity)
+    await userEvent.type(capacity, '2')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(capacity).toHaveAccessibleDescription("Capacity can't go below 3.")
+
+    await userEvent.clear(capacity)
+    await userEvent.type(capacity, '3')
+    await userEvent.clear(screen.getByLabelText('Edit want'))
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByLabelText('Edit want')).toHaveAccessibleDescription('Write what you want first.')
+  })
+
+  it('tells screen readers when a want is added or moved to another category', async () => {
+    vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos'))
+    vi.mocked(updateWant).mockResolvedValue(want(1, 'Ramen downtown', 'GAME'))
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Added Tacos.'))
+
+    await userEvent.click(within(await openMenu('Ramen downtown')).getByRole('menuitemradio', { name: 'Game' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Moved Ramen downtown to Game.'))
+  })
+
+  it('sends one signup however often it is pressed, and waits while it is on its way', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4 })])
+    let answer: () => void = () => {}
+    vi.mocked(signUp).mockReturnValue(new Promise((resolve) => (answer = () => resolve({} as never))))
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    const button = screen.getByRole('button', { name: 'Sign up' })
+    await userEvent.click(button)
+    await userEvent.click(button)
+
+    expect(signUp).toHaveBeenCalledTimes(1)
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    answer()
+    await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
+  })
+
+  it('tells screen readers when you join or withdraw', async () => {
+    vi.mocked(listWants).mockResolvedValue([want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4 })])
+    vi.mocked(signUp).mockResolvedValue({} as never)
+    vi.mocked(withdraw).mockResolvedValue({} as never)
+    renderWants()
+    await screen.findByText('Dune Part Two')
+
+    // The reload after signing up shows you in the lineup.
+    vi.mocked(listWants).mockResolvedValue([
+      want(2, 'Dune Part Two', 'MOVIE', SAM, { capacity: 4, seatsTaken: 2, signedUp: true }),
+    ])
+    await userEvent.click(screen.getByRole('button', { name: 'Sign up' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent("You're going to Dune Part Two."))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Withdraw' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('You withdrew from Dune Part Two.'))
+  })
+
+  it('names categories in sentence case, while sending the API its own values', async () => {
+    renderWants()
+    await screen.findByText('Ramen downtown')
+
+    expect(screen.getByRole('button', { name: 'Food' })).toBeInTheDocument()
+    expect(within(screen.getByLabelText('Category')).getByRole('option', { name: 'Movie' })).toHaveValue('MOVIE')
+  })
+
   it('reloads the list with a fresh token when you change your picture in Clerk', async () => {
     const { rerender } = renderWants()
     await screen.findByText('Ramen downtown')
@@ -914,7 +1142,7 @@ describe('Wants', () => {
 
     // The reload never answers, so whatever shows meanwhile stays on screen.
     vi.mocked(listWants).mockReturnValue(new Promise(() => {}))
-    await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Close' }))
+    await pickFromMenu('Ramen downtown', 'Close')
 
     await waitFor(() => expect(listWants).toHaveBeenCalledTimes(2))
     expect(screen.getByText('Ramen downtown')).toBeInTheDocument()
@@ -1162,7 +1390,7 @@ describe('Wants', () => {
       await screen.findByText('Ramen downtown')
 
       await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
-      expect(screen.getByLabelText('Reopen deadline')).toHaveDisplayValue(/^Keep /)
+      expect(screen.getByLabelText('Reopen until')).toHaveDisplayValue(/^Keep /)
       await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
 
       expect(reopenWant).toHaveBeenCalledWith(1)
@@ -1178,12 +1406,12 @@ describe('Wants', () => {
       await screen.findByText('Catan night')
 
       await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Reopen' }))
-      const keep = within(row('Ramen downtown')).getByLabelText('Reopen deadline')
+      const keep = within(row('Ramen downtown')).getByLabelText('Reopen until')
       expect(keep).toHaveDisplayValue(/^Keep .*30/)
       await userEvent.click(within(row('Ramen downtown')).getByRole('button', { name: 'Cancel' }))
 
       await userEvent.click(within(row('Catan night')).getByRole('button', { name: 'Reopen' }))
-      expect(within(row('Catan night')).getByLabelText('Reopen deadline')).toHaveDisplayValue('No deadline')
+      expect(within(row('Catan night')).getByLabelText('Reopen until')).toHaveDisplayValue('No deadline')
     })
 
     it('Cancel in the Reopen step puts focus back on Reopen', async () => {
@@ -1220,7 +1448,7 @@ describe('Wants', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
       await userEvent.keyboard('{Escape}')
 
-      expect(screen.queryByLabelText('Reopen deadline')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Reopen until')).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Reopen' })).toHaveFocus()
       expect(reopenWant).not.toHaveBeenCalled()
     })
@@ -1287,7 +1515,7 @@ describe('Wants', () => {
       await screen.findByText('Ramen downtown')
 
       await userEvent.click(screen.getByRole('button', { name: 'Reopen' }))
-      await userEvent.selectOptions(screen.getByLabelText('Reopen deadline'), 'Tomorrow')
+      await userEvent.selectOptions(screen.getByLabelText('Reopen until'), 'Tomorrow')
       await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
 
       expect(reopenWant).toHaveBeenCalledWith(1, at(2026, 9, 26, 12, 0))
@@ -1349,6 +1577,19 @@ describe('Wants', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Add' }))
 
       expect(createWant).toHaveBeenCalledWith({ message: 'Tacos', category: 'FOOD', capacity: 1 })
+    })
+
+    it('puts focus back in the Add box after adding, ready for the next one', async () => {
+      // Add turns disabled as the box empties, which would otherwise drop focus to the page.
+      vi.mocked(createWant).mockResolvedValue(want(3, 'Tacos'))
+      renderWants()
+      await screen.findByText('Ramen downtown')
+
+      await userEvent.type(screen.getByLabelText('Want description'), 'Tacos')
+      await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      await waitFor(() => expect(screen.getByLabelText('Want description')).toHaveFocus())
+      expect(screen.getByLabelText('Want description')).toHaveValue('')
     })
 
     it('adds a want to the circle you pick', async () => {

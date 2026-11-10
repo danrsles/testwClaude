@@ -9,7 +9,7 @@ describe('Info', () => {
   it('introduces the app', () => {
     render(<Info />)
 
-    expect(screen.getByRole('heading', { level: 1, name: 'About Wants' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'About Yuwant' })).toBeInTheDocument()
   })
 
   it('lists every category with a description', () => {

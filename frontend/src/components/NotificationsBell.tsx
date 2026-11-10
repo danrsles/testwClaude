@@ -16,7 +16,7 @@ export default function NotificationsBell() {
       aria-label={label}
       title={label}
       className={({ isActive }) =>
-        `relative rounded-full p-1.5 ${
+        `relative block rounded-full p-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 ${
           isActive
             ? 'text-emerald-700 dark:text-emerald-400'
             : 'text-stone-500 hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100'

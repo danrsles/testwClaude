@@ -2,46 +2,68 @@
 
 /* Tailwind v4 needs no config file; theme values are declared in CSS. */
 @theme {
-  --color-food: oklch(0.63 0.14 48);
+  --color-food: oklch(0.56 0.14 48);
   --color-movie: oklch(0.52 0.16 275);
-  --color-game: oklch(0.55 0.11 160);
+  --color-game: oklch(0.52 0.11 160);
   --color-trip: oklch(0.55 0.17 315);
 }
 
 /*
  * Controls shared by more than one component. In v4 these belong here rather
  * than in a constants module, so markup reads as plain `field` / `btn` classes.
- * Neither sets padding: callers size themselves, which avoids two utilities
+ * None sets padding: callers size themselves, which avoids two utilities
  * fighting over the same property.
  */
 @utility field {
-  @apply rounded-lg border border-stone-300 bg-white text-stone-900;
-  @apply focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600;
-  @apply dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100;
+  @apply rounded-xl border border-stone-500 bg-white text-stone-900 shadow-xs;
+  @apply focus:border-violet-500 focus:outline-2 focus:outline-offset-1 focus:outline-violet-500;
+  @apply dark:border-stone-500 dark:bg-stone-900 dark:text-stone-100;
   /* The default placeholder is too faint to read (about 3.4:1). */
   @apply placeholder:text-stone-500 dark:placeholder:text-stone-400;
 }
 
 @utility btn {
-  @apply cursor-pointer rounded-lg border border-stone-300 bg-white;
-  @apply hover:border-emerald-600 disabled:cursor-not-allowed disabled:opacity-50;
+  @apply cursor-pointer rounded-xl border border-stone-200 bg-white font-medium text-stone-700 shadow-xs transition-colors;
+  @apply hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50;
   @apply aria-disabled:cursor-not-allowed aria-disabled:opacity-50;
-  @apply dark:border-stone-700 dark:bg-stone-900;
+  @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500;
+  @apply dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:border-stone-600 dark:hover:bg-stone-800;
 }
 
 /*
- * The main action on a screen, such as Add or Follow. The transparent border
- * keeps it the same height as a `btn` beside it. aria-disabled is styled like
- * disabled for buttons that must keep focus while blocked.
+ * The main action on a screen or card, such as Add, Sign up or Follow. The
+ * transparent border keeps it the same height as a `btn` beside it.
+ * aria-disabled is styled like disabled for buttons that must keep focus while blocked.
  */
 @utility btn-primary {
-  @apply cursor-pointer rounded-lg border border-transparent bg-emerald-700 font-medium text-white;
+  @apply cursor-pointer rounded-xl border border-transparent bg-emerald-700 font-medium text-white shadow-xs transition-colors;
   @apply hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50;
   @apply aria-disabled:cursor-not-allowed aria-disabled:opacity-50;
+  @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600;
+}
+
+/* A raised surface: a want, the composer, an empty state. */
+@utility card {
+  @apply rounded-2xl border border-stone-200/80 bg-white shadow-sm;
+  @apply dark:border-stone-800 dark:bg-stone-900 dark:shadow-none;
+}
+
+/* The base of every status and audience label; callers add the colours. */
+@utility pill {
+  @apply inline-flex items-center gap-1 rounded-full text-xs font-semibold tracking-wide;
 }
 
 @layer base {
   body {
     @apply bg-stone-50 text-stone-900 antialiased scheme-light dark:bg-stone-950 dark:text-stone-100 dark:scheme-dark;
+    /* A soft wash at the top of every page, fading into the background. */
+    background-image: radial-gradient(ellipse 80% 420px at 50% -80px, oklch(0.93 0.05 290 / 0.9), transparent);
+    background-repeat: no-repeat;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body {
+      background-image: radial-gradient(ellipse 80% 420px at 50% -80px, oklch(0.3 0.08 290 / 0.6), transparent);
+    }
   }
 }
