@@ -2,6 +2,14 @@ export const CATEGORIES = ['FOOD', 'MOVIE', 'GAME', 'TRIP'] as const
 
 export type Category = (typeof CATEGORIES)[number]
 
+/** How a category reads on screen. The API's values stay upper case; only what people see changes. */
+export const CATEGORY_LABEL: Record<Category, string> = {
+  FOOD: 'Food',
+  MOVIE: 'Movie',
+  GAME: 'Game',
+  TRIP: 'Trip',
+}
+
 /**
  * Whether people can join. Only an ACTIVE want takes signups, withdrawals and
  * edits. CLOSED has a fixed lineup until the owner reopens it; ENDED is final

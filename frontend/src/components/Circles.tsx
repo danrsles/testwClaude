@@ -58,7 +58,7 @@ export default function Circles() {
 
   return (
     <div className="max-w-3xl">
-      <title>Circles · Wants</title>
+      <title>Circles · Yuwant</title>
       <h1 className="text-3xl font-semibold tracking-tight">Circles</h1>
       <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">
         Groups of people, like a group chat. Add your followers to the circles you create.

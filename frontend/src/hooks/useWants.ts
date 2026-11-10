@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { HttpError } from '../api/http'
 import {
   cancelWant,
@@ -25,8 +25,21 @@ export type DeadlineChange = { expiresAt: string } | { noDeadline: true }
 /** What an edit changes about who sees it: a circle, or back to General. Never both, which the API refuses. */
 export type AudienceChange = { circleId: number } | { allFollowers: true }
 
+/**
+ * A refusal in words. The API's error body is Spring's JSON, which must never
+ * reach the screen, so an HttpError is worded from its status. A 429 keeps
+ * the wording `fail` gave it, from Retry-After.
+ */
 function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : 'Request failed'
+  if (e instanceof HttpError) {
+    if (e.status === 429) return e.message
+    if (e.status === 409) return "That didn't go through: it changed meanwhile, such as closing or filling up."
+    if (e.status === 403) return 'Only the person who posted it can change it.'
+    if (e.status === 404) return "It's no longer there."
+    if (e.status === 400) return "That change isn't allowed."
+    return 'Something went wrong. Try again.'
+  }
+  return e instanceof Error ? e.message : 'Something went wrong. Try again.'
 }
 
 /** Posting to a circle that was deleted, or that you left or were removed from, is a 404 whose body is Spring's raw JSON. */
@@ -41,7 +54,12 @@ export interface UseWants {
   /** Every page loaded so far, newest first. */
   wants: Want[]
   loading: boolean
+  /** A load failure, or a refused change that belongs to no card on screen, such as Add. */
   error: string | null
+  /** Why the last change to this want was refused, shown in its card; null if it wasn't. */
+  refusalFor: (id: number) => string | null
+  /** Whether a change to this want is on its way. A second one for the same want is refused until it lands. */
+  isPending: (id: number) => boolean
   refresh: () => Promise<void>
   /** Whether older wants remain to be loaded. */
   hasMore: boolean
@@ -109,24 +127,50 @@ export function useWants(filter: Category | ''): UseWants {
   const wants = query.data?.pages.flat() ?? []
 
   // Why the last change was refused, kept with the filter it happened under,
-  // so switching filters clears it as a reload used to.
-  const [refusal, setRefusal] = useState<{ filter: Category | ''; message: string } | null>(null)
+  // so switching filters clears it as a reload used to, and with the want it
+  // was about, so its card can say so where the person is looking.
+  const [refusal, setRefusal] = useState<{ filter: Category | ''; message: string; wantId?: number } | null>(null)
   const loadError = query.error ? messageOf(query.error) : null
-  const error = refusal?.filter === filter ? refusal.message : loadError
+  const current = refusal?.filter === filter ? refusal : null
+  // A want that has left the feed, such as one cancelled elsewhere, has no
+  // card to show it in, so its refusal goes to the top of the page instead.
+  const onCard = current?.wantId !== undefined && wants.some((w) => w.id === current.wantId)
+  const error = current && !onCard ? current.message : loadError
+  const refusalFor = useCallback(
+    (id: number) => (onCard && current?.wantId === id ? current.message : null),
+    [onCard, current],
+  )
+
+  // Wants with a change on its way, so a double tap sends one request, not two.
+  const [pending, setPending] = useState<ReadonlySet<number>>(new Set())
+  const isPending = useCallback((id: number) => pending.has(id), [pending])
 
   // Every filter's pages, since a change can move a want in or out of any of them.
   const refresh = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['wants', me?.id] })
   }, [queryClient, me?.id])
 
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
+  // Never while the pages are being fetched, a refresh after a change
+  // included: fetchNextPage would cancel that refresh by default, leaving the
+  // screen on the pages from before the change. LoadMore's observer is made
+  // again when this changes, so it loads the next page once the refresh lands.
+  const { hasNextPage, isFetching, fetchNextPage } = query
   const loadMore = useCallback(() => {
-    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+    if (hasNextPage && !isFetching) void fetchNextPage({ cancelRefetch: false })
+  }, [hasNextPage, isFetching, fetchNextPage])
 
-  // circleId is the circle being posted to, if any, so its 404 can be worded.
-  const mutate = useCallback(
-    async (action: () => Promise<unknown>, circleId?: number): Promise<boolean> => {
+  // A ref mirrors `pending` so two calls in the same render both see the first.
+  const inFlight = useRef(new Set<number>())
+  const track = useCallback((id: number, on: boolean) => {
+    if (on) inFlight.current.add(id)
+    else inFlight.current.delete(id)
+    setPending(new Set(inFlight.current))
+  }, [])
+
+  // circleId is the circle being posted to, if any, so its 404 can be worded;
+  // wantId the want changed, if any, so its card shows the refusal.
+  const attempt = useCallback(
+    async (action: () => Promise<unknown>, circleId?: number, wantId?: number): Promise<boolean> => {
       try {
         await action()
         setRefusal(null)
@@ -140,16 +184,31 @@ export function useWants(filter: Category | ''): UseWants {
           // Deleted, or you were removed or left: the API can't tell you which.
           setRefusal({
             filter,
+            wantId,
             message: "You can't post to that circle any more. It was deleted, or you're no longer in it.",
           })
           void queryClient.invalidateQueries({ queryKey: ['circles', me?.id], exact: true })
         } else {
-          setRefusal({ filter, message: messageOf(e) })
+          setRefusal({ filter, wantId, message: messageOf(e) })
         }
         return false
       }
     },
-    [refresh, queryClient, me?.id, filter],
+    [refresh, queryClient, me?.id, filter, setRefusal],
+  )
+
+  // A change to one want waits for the last change to it, so its buttons can
+  // say so and a double tap sends one request.
+  const mutate = useCallback(
+    async (action: () => Promise<unknown>, { circleId, wantId }: { circleId?: number; wantId?: number } = {}) => {
+      if (wantId === undefined) return attempt(action, circleId)
+      if (inFlight.current.has(wantId)) return false
+      track(wantId, true)
+      const ok = await attempt(action, circleId, wantId)
+      track(wantId, false)
+      return ok
+    },
+    [attempt, track],
   )
 
   const add = useCallback(
@@ -163,7 +222,7 @@ export function useWants(filter: Category | ''): UseWants {
             ...(expiresAt === undefined ? {} : { expiresAt }),
             ...(circleId === undefined ? {} : { circleId }),
           }),
-        circleId,
+        { circleId },
       ),
     [mutate],
   )
@@ -177,42 +236,44 @@ export function useWants(filter: Category | ''): UseWants {
       deadline?: DeadlineChange,
       audience?: AudienceChange,
     ) =>
-      mutate(
-        () => updateWant(id, { message, category, ...change, ...deadline, ...audience }),
-        audience && 'circleId' in audience ? audience.circleId : undefined,
-      ),
+      mutate(() => updateWant(id, { message, category, ...change, ...deadline, ...audience }), {
+        circleId: audience && 'circleId' in audience ? audience.circleId : undefined,
+        wantId: id,
+      }),
     [mutate],
   )
 
-  const close = useCallback((id: number) => mutate(() => closeWant(id)), [mutate])
+  const close = useCallback((id: number) => mutate(() => closeWant(id), { wantId: id }), [mutate])
 
   // No deadline means no body at all, rather than a body saying "none".
   const reopen = useCallback(
     (id: number, expiresAt?: string) =>
-      mutate(() => (expiresAt === undefined ? reopenWant(id) : reopenWant(id, expiresAt))),
+      mutate(() => (expiresAt === undefined ? reopenWant(id) : reopenWant(id, expiresAt)), { wantId: id }),
     [mutate],
   )
 
-  const start = useCallback((id: number) => mutate(() => startWant(id)), [mutate])
+  const start = useCallback((id: number) => mutate(() => startWant(id), { wantId: id }), [mutate])
 
-  const end = useCallback((id: number) => mutate(() => endWant(id)), [mutate])
+  const end = useCallback((id: number) => mutate(() => endWant(id), { wantId: id }), [mutate])
 
-  const cancel = useCallback((id: number) => mutate(() => cancelWant(id)), [mutate])
+  const cancel = useCallback((id: number) => mutate(() => cancelWant(id), { wantId: id }), [mutate])
 
   // The list is reloaded afterwards, so the seats shown come from the feed
   // rather than from the details these return.
-  const join = useCallback((id: number) => mutate(() => signUp(id)), [mutate])
+  const join = useCallback((id: number) => mutate(() => signUp(id), { wantId: id }), [mutate])
 
-  const leave = useCallback((id: number) => mutate(() => withdraw(id)), [mutate])
+  const leave = useCallback((id: number) => mutate(() => withdraw(id), { wantId: id }), [mutate])
 
   return {
     wants,
     loading: query.isFetching,
     error,
+    refusalFor,
+    isPending,
     refresh,
     hasMore: hasNextPage,
     loadMore,
-    loadingMore: isFetchingNextPage,
+    loadingMore: query.isFetchingNextPage,
     add,
     update,
     close,

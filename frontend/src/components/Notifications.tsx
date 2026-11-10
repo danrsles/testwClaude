@@ -92,7 +92,7 @@ export default function Notifications() {
 
   return (
     <div className="max-w-3xl">
-      <title>Notifications · Wants</title>
+      <title>Notifications · Yuwant</title>
       <h1 className="text-3xl font-semibold tracking-tight">Notifications</h1>
       <p className="mt-1 mb-7 text-stone-500 dark:text-stone-400">
         Follows, signups on your wants, and changes to wants you're in. New ones turn up here within half a minute.

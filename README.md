@@ -1,4 +1,4 @@
-# Wants
+# Yuwant
 
 **A social planning app: post something you want to do, and the people who follow you take a seat.**
 
@@ -24,6 +24,8 @@ It is a full-stack app deployed on AWS. It was built one feature at a time from 
 - **A lifecycle.** The owner can **close** a want (the lineup is fixed), **reopen** it, **start** it ("happening now"), **end** it, or **cancel** it. When a deadline passes, the want closes on its own.
 - **Notifications.** 16 kinds, such as "dani posted 'Pizza Friday'", "sam took a seat", "dani moved the deadline" and "Pizza Friday has started". A bell shows the unread count.
 - **Accounts through Clerk.** Sign-in, username and profile picture all come from Clerk, and a changed picture shows in the app straight away.
+
+The screens take their look from event apps such as Luma: each want is a card with one main action (Sign up, Withdraw, Edit or Reopen), the owner's other actions sit in an accessible ⋯ menu, and the lineup shows as a stack of faces with names.
 
 Every rule above is drawn as a decision tree in [How status and notifications are decided](#how-status-and-notifications-are-decided).
 
@@ -614,8 +616,8 @@ frontend/src/
   types/         shapes mirroring the API
   components/    the screens (Wants.tsx at /, People.tsx at /people, Circles.tsx at /circles,
                  Notifications.tsx at /notifications, Info.tsx at /info), NotificationsBell.tsx in the header,
-                 SignInScreen.tsx for signed-out visitors, and Avatar.tsx, the round
-                 picture beside each want
+                 SignInScreen.tsx for signed-out visitors, Avatar.tsx, the round
+                 picture beside each want, and RowMenu.tsx, a want card's ⋯ menu
   App.tsx        the shell: the sign-in gate, nav and routes (ClerkProvider,
                  QueryClientProvider and BrowserRouter are in main.tsx)
 terraform/       single-instance AWS deployment

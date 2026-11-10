@@ -68,8 +68,14 @@ export default function DeadlinePicker({ label, value, onChange, noneLabel = 'No
             title="Optional: noon if left empty"
             className="field px-2 py-1.5 text-sm"
           />
+          {/* Before any date is chosen it is a hint, not an error: nothing is wrong yet. */}
           {invalid && (
-            <span id={hintId} className="basis-full text-sm text-red-700 dark:text-red-400">
+            <span
+              id={hintId}
+              className={`basis-full text-sm ${
+                value.date ? 'text-red-700 dark:text-red-400' : 'text-stone-500 dark:text-stone-400'
+              }`}
+            >
               {value.date ? "Pick a time that hasn't passed" : 'Choose a date'}
             </span>
           )}

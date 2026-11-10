@@ -118,17 +118,17 @@ describe('App routing', () => {
 
   it('names each page in the browser tab', async () => {
     renderAt('/people')
-    await waitFor(() => expect(document.title).toBe('People · Wants'))
+    await waitFor(() => expect(document.title).toBe('People · Yuwant'))
 
     await userEvent.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Info' }))
-    await waitFor(() => expect(document.title).toBe('About · Wants'))
+    await waitFor(() => expect(document.title).toBe('About · Yuwant'))
   })
 
   it('routes /circles and links to it from the nav', async () => {
     renderAt('/circles')
 
     expect(screen.getByRole('heading', { level: 1, name: 'Circles' })).toBeInTheDocument()
-    await waitFor(() => expect(document.title).toBe('Circles · Wants'))
+    await waitFor(() => expect(document.title).toBe('Circles · Yuwant'))
     const nav = screen.getByRole('navigation', { name: 'Main' })
     expect(within(nav).getByRole('link', { name: 'Circles' })).toHaveAttribute('href', '/circles')
   })
@@ -148,7 +148,7 @@ describe('App routing', () => {
   it('shows the info page at /info', () => {
     renderAt('/info')
 
-    expect(screen.getByRole('heading', { level: 1, name: 'About Wants' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'About Yuwant' })).toBeInTheDocument()
   })
 
   it('navigates between screens from the nav', async () => {
@@ -156,7 +156,7 @@ describe('App routing', () => {
     const nav = screen.getByRole('navigation', { name: 'Main' })
 
     await userEvent.click(within(nav).getByRole('link', { name: 'Info' }))
-    expect(screen.getByRole('heading', { level: 1, name: 'About Wants' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'About Yuwant' })).toBeInTheDocument()
 
     await userEvent.click(within(nav).getByRole('link', { name: 'Wants' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Wants' })).toBeInTheDocument()
